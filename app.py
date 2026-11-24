@@ -76,8 +76,21 @@ def apply_subclip(clip, start_t, end_t):
     return clip.subclipped(start_t, end_t) if MOVIEPY_V2 else clip.subclip(start_t, end_t)
 
 
-def apply_position(clip, pos):
-    return clip.with_position(pos) if MOVIEPY_V2 else clip.set_position(pos)
+def fit_image_to_frame(img_path, target_w, target_h):
+    """Resize and pad/crop an image cleanly to exact (target_w, target_h) using Pillow."""
+    resampling = getattr(Image, "Resampling", Image).LANCZOS
+    with Image.open(img_path) as im:
+        rgb = im.convert("RGB")
+        scale = max(target_w / rgb.width, target_h / rgb.height)
+        new_w = max(1, int(round(rgb.width * scale)))
+        new_h = max(1, int(round(rgb.height * scale)))
+        resized = rgb.resize((new_w, new_h), resampling)
+        left = max(0, (new_w - target_w) // 2)
+        top = max(0, (new_h - target_h) // 2)
+        cropped = resized.crop((left, top, left + target_w, top + target_h))
+        fitted_path = f"fitted_{os.path.basename(img_path)}"
+        cropped.save(fitted_path, format="JPEG", quality=92)
+        return fitted_path
 
 
 st.title("🎬 AI Animated Story Studio")
@@ -344,10 +357,9 @@ with tab4:
                             trimmed = apply_subclip(vid, 0, target_duration)
                             scene_clip = apply_audio(trimmed, audio_clip)
                         else:
-                            img_c = ImageClip(st.session_state.images[i])
+                            fitted_img = fit_image_to_frame(st.session_state.images[i], width, height)
+                            img_c = ImageClip(fitted_img)
                             img_c = apply_duration(img_c, target_duration)
-                            img_c = img_c.resize(lambda t: 1 + 0.04 * t)
-                            img_c = apply_position(img_c, ("center", "center"))
                             scene_clip = apply_audio(img_c, audio_clip)
                         clips.append(scene_clip)
 
