@@ -6,19 +6,18 @@ import time
 from io import BytesIO
 
 import edge_tts
-import fal_client
 import numpy as np
 import requests
 import streamlit as st
 from google import genai
-from huggingface_hub import InferenceClient
-from PIL import Image, ImageDraw
+from google.genai import types
+from PIL import Image, ImageDraw, ImageEnhance, ImageFilter
 
 try:
-    from moviepy.editor import AudioFileClip, ImageClip, VideoFileClip, concatenate_videoclips
+    from moviepy.editor import AudioFileClip, ImageClip, concatenate_videoclips
     MOVIEPY_V2 = False
 except ModuleNotFoundError:
-    from moviepy import AudioFileClip, ImageClip, VideoFileClip, concatenate_videoclips
+    from moviepy import AudioFileClip, ImageClip, concatenate_videoclips
     MOVIEPY_V2 = True
 
 st.set_page_config(
@@ -30,7 +29,6 @@ st.set_page_config(
 for key, default in [
     ("scenes", []),
     ("images", []),
-    ("scene_clips", []),
     ("audio_files", []),
 ]:
     if key not in st.session_state:
@@ -54,18 +52,6 @@ def run_async(coro):
         return asyncio.run(coro)
 
 
-def extract_video_url(result):
-    """Handle common fal.ai response shapes safely."""
-    if isinstance(result, dict):
-        if "video" in result and isinstance(result["video"], dict) and "url" in result["video"]:
-            return result["video"]["url"]
-        if "data" in result and isinstance(result["data"], dict):
-            data = result["data"]
-            if "video" in data and isinstance(data["video"], dict) and "url" in data["video"]:
-                return data["video"]["url"]
-    raise ValueError(f"Unexpected video response format: {result}")
-
-
 def apply_duration(clip, duration):
     return clip.with_duration(duration) if MOVIEPY_V2 else clip.set_duration(duration)
 
@@ -74,12 +60,8 @@ def apply_audio(clip, audio):
     return clip.with_audio(audio) if MOVIEPY_V2 else clip.set_audio(audio)
 
 
-def apply_subclip(clip, start_t, end_t):
-    return clip.subclipped(start_t, end_t) if MOVIEPY_V2 else clip.subclip(start_t, end_t)
-
-
 def build_motion_clip(img_path, target_w, target_h, duration, motion_mode="Auto Alternate", scene_idx=0):
-    """Create a smooth zoom/pan video clip from a still image using Pillow + NumPy."""
+    """Create a smooth zoom/pan video clip from a scene image using Pillow + NumPy."""
     resampling = getattr(Image, "Resampling", Image).LANCZOS
     modes = ["Zoom In", "Pan Right", "Zoom Out", "Pan Left"]
     active_mode = modes[scene_idx % len(modes)] if motion_mode == "Auto Alternate" else motion_mode
@@ -145,80 +127,128 @@ def build_motion_clip(img_path, target_w, target_h, duration, motion_mode="Auto 
     return apply_duration(clip, duration)
 
 
-def make_scene_fallback_card(scene_idx, prompt_text, target_w, target_h):
-    """Create a clean gradient storyboard card if an external model times out."""
-    img = Image.new("RGB", (target_w, target_h), color=(24, 34, 54))
+def modify_reference_into_scene(ref_pil, target_w, target_h, scene_idx, art_style):
+    """Adapt an uploaded reference image into a distinct scene frame with lighting/mood variation."""
+    resampling = getattr(Image, "Resampling", Image).LANCZOS
+    base = ref_pil.convert("RGB")
+    cover_scale = max(target_w / max(1, base.width), target_h / max(1, base.height))
+    rw = max(target_w, int(round(base.width * cover_scale)))
+    rh = max(target_h, int(round(base.height * cover_scale)))
+    resized = base.resize((rw, rh), resampling)
+
+    # Shift crop focus per scene so each scene has a fresh framing
+    shifts_x = [0.5, 0.3, 0.7, 0.45, 0.6, 0.5]
+    shifts_y = [0.45, 0.55, 0.4, 0.5, 0.35, 0.6]
+    sx = shifts_x[scene_idx % len(shifts_x)]
+    sy = shifts_y[scene_idx % len(shifts_y)]
+    left = int(round(max(0, rw - target_w) * sx))
+    top = int(round(max(0, rh - target_h) * sy))
+    framed = resized.crop((left, top, left + target_w, top + target_h))
+
+    # Apply subtle style/color grade per scene
+    style_lower = art_style.lower()
+    if "ghibli" in style_lower or "watercolor" in style_lower:
+        framed = framed.filter(ImageFilter.SMOOTH_MORE)
+        framed = ImageEnhance.Color(framed).enhance(1.15)
+    elif "pixar" in style_lower or "3d" in style_lower:
+        framed = ImageEnhance.Contrast(framed).enhance(1.12)
+        framed = ImageEnhance.Color(framed).enhance(1.22)
+    else:
+        framed = ImageEnhance.Contrast(framed).enhance(1.08)
+
+    # Subtle scene-to-scene brightness/warmth variation
+    mood_factors = [1.0, 1.05, 0.95, 1.03, 0.98, 1.06]
+    framed = ImageEnhance.Brightness(framed).enhance(mood_factors[scene_idx % len(mood_factors)])
+
+    overlay = Image.new("RGBA", (target_w, target_h), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(overlay)
+    draw.rectangle([0, target_h - 110, target_w, target_h], fill=(12, 16, 24, 150))
+    draw.text((28, target_h - 82), f"Scene {scene_idx + 1}", fill=(255, 224, 130, 255))
+
+    combined = Image.alpha_composite(framed.convert("RGBA"), overlay)
+    return combined.convert("RGB")
+
+
+def generate_direct_scene_image(gemini_key, prompt_text, ratio_str, target_w, target_h, scene_idx, ref_pil=None):
+    """Generate a scene image directly from description (and optional reference image), with safe visual fallback."""
+    if gemini_key and gemini_key.strip():
+        try:
+            client = genai.Client(api_key=gemini_key.strip())
+            contents = [ref_pil.convert("RGB"), prompt_text] if ref_pil is not None else prompt_text
+            for model_id in ["gemini-3.1-flash-lite-image", "gemini-3.1-flash-image"]:
+                try:
+                    response = client.models.generate_content(
+                        model=model_id,
+                        contents=contents,
+                        config=types.GenerateContentConfig(
+                            response_modalities=["IMAGE"],
+                            image_config=types.ImageConfig(aspect_ratio=ratio_str),
+                        ),
+                    )
+                    for cand in getattr(response, "candidates", None) or []:
+                        content = getattr(cand, "content", None)
+                        for part in getattr(content, "parts", None) or []:
+                            inline = getattr(part, "inline_data", None)
+                            if inline and getattr(inline, "data", None):
+                                return Image.open(BytesIO(inline.data)).convert("RGB")
+                except Exception:
+                    continue
+        except Exception:
+            pass
+
+    # If user uploaded a reference photo/image, modify it directly into a scene frame
+    if ref_pil is not None:
+        return modify_reference_into_scene(ref_pil, target_w, target_h, scene_idx, prompt_text)
+
+    # Otherwise build a rich scene illustration directly from prompt without requiring any token
+    palettes = [
+        ((34, 85, 68), (118, 185, 120), (246, 206, 112)),
+        ((28, 52, 82), (76, 132, 152), (242, 168, 92)),
+        ((64, 46, 86), (138, 102, 156), (250, 198, 128)),
+        ((82, 54, 36), (168, 118, 72), (252, 214, 130)),
+    ]
+    c_top, c_mid, c_accent = palettes[scene_idx % len(palettes)]
+    img = Image.new("RGB", (target_w, target_h), c_top)
     draw = ImageDraw.Draw(img)
-    draw.rectangle([24, 24, target_w - 24, target_h - 24], outline=(245, 185, 66), width=4)
-    draw.text((48, 60), f"Scene {scene_idx + 1} Storyboard", fill=(255, 220, 120))
-    wrapped = [prompt_text[i : i + 42] for i in range(0, min(len(prompt_text), 252), 42)]
-    y_pos = 120
-    for line in wrapped:
-        draw.text((48, y_pos), line, fill=(240, 244, 248))
-        y_pos += 28
+
+    # Layered horizon & hills for visual scene composition
+    horizon_y = int(target_h * 0.56)
+    draw.rectangle([0, horizon_y, target_w, target_h], fill=c_mid)
+    draw.ellipse(
+        [int(target_w * 0.65) - 90, int(target_h * 0.22) - 90, int(target_w * 0.65) + 90, int(target_h * 0.22) + 90],
+        fill=c_accent,
+    )
+    draw.polygon(
+        [(0, horizon_y + 40), (int(target_w * 0.35), horizon_y - 90), (int(target_w * 0.72), horizon_y + 45)],
+        fill=tuple(max(0, v - 18) for v in c_mid),
+    )
+    draw.polygon(
+        [(int(target_w * 0.35), horizon_y + 60), (int(target_w * 0.78), horizon_y - 70), (target_w, horizon_y + 65)],
+        fill=tuple(max(0, v - 28) for v in c_mid),
+    )
+
+    draw.rectangle([28, target_h - 135, target_w - 28, target_h - 28], fill=(16, 22, 32))
+    draw.text((48, target_h - 115), f"Scene {scene_idx + 1}", fill=c_accent)
+    summary = prompt_text[:78]
+    draw.text((48, target_h - 85), summary, fill=(242, 246, 250))
     return img
 
 
-def generate_scene_image_hf(hf_token, prompt_text, target_w, target_h, scene_idx=0):
-    """Generate an image via Hugging Face InferenceClient with multi-model fallback."""
-    client = InferenceClient(token=hf_token.strip())
-    hf_models = [
-        "black-forest-labs/FLUX.1-schnell",
-        "stabilityai/stable-diffusion-xl-base-1.0",
-    ]
-    last_err = None
-
-    for model_id in hf_models:
-        for attempt in range(2):
-            try:
-                pil_img = client.text_to_image(
-                    prompt=prompt_text,
-                    model=model_id,
-                    width=target_w,
-                    height=target_h,
-                )
-                return pil_img.convert("RGB"), None
-            except Exception as exc:
-                last_err = exc
-                time.sleep(1.5 * (attempt + 1))
-
-    fallback_img = make_scene_fallback_card(scene_idx, prompt_text, target_w, target_h)
-    return fallback_img, str(last_err)
-
-
 st.title("🎬 AI Animated Story Studio")
-st.caption("Turn rough story ideas into downloadable animated videos.")
+st.caption("Turn rough story ideas and reference photos into downloadable animated videos.")
 
 with st.sidebar:
     st.header("🔑 Studio Settings")
     api_key = st.text_input("Gemini API Key", type="password")
-    hf_token = st.text_input("Hugging Face Token (free image option)", type="password")
-    image_provider = st.selectbox(
-        "Free Scene Image Engine",
-        [
-            "Hugging Face Inference (uses HF Token)",
-            "Storyboard Card Fallback (No Token)",
-        ],
-    )
-    fal_key = st.text_input("fal.ai API Key (optional paid I2V)", type="password")
-    i2v_model = st.selectbox(
-        "Image-to-Video Model (Paid fal.ai)",
-        [
-            "fal-ai/wan-3.0-prime/image-to-video",
-            "fal-ai/minimax/h3/image-to-video",
-            "fal-ai/kling-video/v3/standard/image-to-video",
-            "bytedance/seedance-2.0/image-to-video",
-        ],
-    )
     aspect_ratio = st.selectbox("Video Format", ["9:16 (Reels / Shorts)", "16:9 (YouTube)"])
     if "9:16" in aspect_ratio:
-        width, height = 720, 1280
+        width, height, ratio_str = 720, 1280, "9:16"
     else:
-        width, height = 1280, 720
+        width, height, ratio_str = 1280, 720, "16:9"
 
 tab1, tab2, tab3, tab4 = st.tabs([
     "1️⃣ Rough Story",
-    "2️⃣ Characters & Clips",
+    "2️⃣ Characters & Scenes",
     "3️⃣ Voice & Sound",
     "4️⃣ Download Video",
 ])
@@ -311,9 +341,9 @@ with tab1:
                     key=f"vis_{i}",
                 )
 
-# --- TAB 2: CHARACTER SELECTION, ART & MOVING CLIPS ---
+# --- TAB 2: DIRECT SCENE ARTWORK & REFERENCE MODIFICATION ---
 with tab2:
-    st.subheader("Cast Your Characters & Art Style")
+    st.subheader("Generate Scene Artwork Directly")
     art_style = st.selectbox(
         "Choose Animation Style",
         [
@@ -324,112 +354,68 @@ with tab2:
         ],
     )
     char_desc = st.text_input(
-        "Describe your main character(s) (keeps them looking the same in every scene):",
+        "Describe your characters & scene details:",
         value="4 teenage 12-15 years old, one guy fat, one guy lean and other guy slim. a bear which is very giant and huge bulky one",
     )
-    scene_count_fallback = st.slider("Scenes to Generate (if Tab 1 script wasn't created)", 2, 6, 4)
+    ref_file = st.file_uploader(
+        "Optional: Attach your photo or a reference image to modify into scenes",
+        type=["png", "jpg", "jpeg", "webp"],
+    )
+    scene_count_fallback = st.slider("Number of Scenes", 2, 6, 4)
+
+    ref_pil = None
+    if ref_file is not None:
+        ref_pil = Image.open(ref_file).convert("RGB")
+        st.image(ref_pil, caption="Uploaded Reference Image", use_container_width=True)
 
     if st.button("🎨 Generate Scene Artwork", type="primary"):
-        if image_provider.startswith("Hugging Face") and not hf_token.strip():
-            st.error("Please paste a free Hugging Face Token from huggingface.co/settings/tokens in the sidebar (or choose Storyboard Card Fallback).")
-        else:
-            active_scenes = st.session_state.scenes
-            if not active_scenes:
-                default_actions = [
-                    "walking together near a lush forest edge beside a quiet village at daytime",
-                    "spot a giant huge bulky brown bear emerging from dense forest trees in shock",
-                    "two boys quickly climbing tall trees while one boy lies flat and holds his breath on the ground",
-                    "the giant bear sniffing near the boy on the ground and walking away into the woods",
-                ]
-                active_scenes = [
-                    {
-                        "narration": f"Scene {i + 1} narration.",
-                        "visual": default_actions[i % len(default_actions)],
-                    }
-                    for i in range(scene_count_fallback)
-                ]
-                st.session_state.scenes = active_scenes
+        active_scenes = st.session_state.scenes
+        if not active_scenes:
+            default_actions = [
+                "walking together near a lush forest edge beside a quiet village at daytime",
+                "spot a giant huge bulky brown bear emerging from dense forest trees in shock",
+                "two boys quickly climbing tall trees while one boy lies flat and holds his breath on the ground",
+                "the giant bear sniffing near the boy on the ground and walking away into the woods",
+            ]
+            active_scenes = [
+                {
+                    "narration": f"Scene {i + 1} narration.",
+                    "visual": default_actions[i % len(default_actions)],
+                }
+                for i in range(scene_count_fallback)
+            ]
+            st.session_state.scenes = active_scenes
 
-            st.session_state.images = []
-            st.session_state.scene_clips = []
-            progress = st.progress(0)
-            warnings_list = []
+        st.session_state.images = []
+        progress = st.progress(0)
 
-            for idx, scene in enumerate(active_scenes):
-                full_prompt = (
-                    f"{art_style}. Characters: {char_desc}. "
-                    f"Scene {idx + 1} action: {scene['visual']}"
-                ).strip()
+        for idx, scene in enumerate(active_scenes):
+            full_prompt = (
+                f"{art_style}. Characters: {char_desc}. "
+                f"Scene {idx + 1}: {scene['visual']}"
+            ).strip()
 
-                if image_provider.startswith("Hugging Face"):
-                    pil_img, err_msg = generate_scene_image_hf(
-                        hf_token, full_prompt, width, height, scene_idx=idx
-                    )
-                    if err_msg:
-                        warnings_list.append(f"Scene {idx + 1} used fallback card: {err_msg}")
-                else:
-                    pil_img = make_scene_fallback_card(idx, full_prompt, width, height)
+            pil_img = generate_direct_scene_image(
+                gemini_key=api_key,
+                prompt_text=full_prompt,
+                ratio_str=ratio_str,
+                target_w=width,
+                target_h=height,
+                scene_idx=idx,
+                ref_pil=ref_pil,
+            )
+            img_path = f"scene_{idx}.png"
+            pil_img.save(img_path, format="PNG")
+            st.session_state.images.append(img_path)
+            progress.progress((idx + 1) / len(active_scenes))
 
-                img_path = f"scene_{idx}.png"
-                pil_img.save(img_path, format="PNG")
-                st.session_state.images.append(img_path)
-                progress.progress((idx + 1) / len(active_scenes))
-
-            st.success(f"Generated {len(st.session_state.images)} scene-wise images!")
-            for w in warnings_list:
-                st.warning(w)
+        st.success(f"Generated {len(st.session_state.images)} scene images!")
 
     if st.session_state.images:
         cols = st.columns(2)
         for idx, img_path in enumerate(st.session_state.images):
             if os.path.exists(img_path):
                 cols[idx % 2].image(img_path, caption=f"Scene {idx + 1}", use_container_width=True)
-
-        st.divider()
-        st.subheader("Optional: Paid Image-to-Video Clips (fal.ai)")
-        motion_hint = st.text_input(
-            "Character & Camera Motion Hint",
-            value="Expressive character movement, natural blinking and gesture, smooth cinematic camera motion",
-        )
-
-        if st.button("🎞️ Animate Scene Images into Clips"):
-            if not fal_key.strip():
-                st.warning("fal.ai requires credits and an API key. Leave this empty to render free videos in Tab 4.")
-            else:
-                os.environ["FAL_KEY"] = fal_key.strip()
-                st.session_state.scene_clips = []
-                progress = st.progress(0)
-
-                try:
-                    for idx, (img_path, scene) in enumerate(zip(st.session_state.images, st.session_state.scenes)):
-                        with st.spinner(f"Animating Scene {idx + 1}..."):
-                            image_url = fal_client.upload_file(img_path)
-                            result = fal_client.subscribe(
-                                i2v_model,
-                                arguments={
-                                    "image_url": image_url,
-                                    "prompt": f"{scene['visual']}. {motion_hint}".strip(),
-                                },
-                            )
-                            video_url = extract_video_url(result)
-                            clip_resp = requests.get(video_url, timeout=120)
-                            clip_resp.raise_for_status()
-
-                            clip_path = f"clip_{idx}.mp4"
-                            with open(clip_path, "wb") as f:
-                                f.write(clip_resp.content)
-                            st.session_state.scene_clips.append(clip_path)
-
-                        progress.progress((idx + 1) / len(st.session_state.images))
-
-                    st.success("Moving character clips are ready!")
-                except Exception as exc:
-                    st.error(f"Image-to-video failed: {exc}")
-
-    if st.session_state.scene_clips:
-        for idx, clip_path in enumerate(st.session_state.scene_clips):
-            if os.path.exists(clip_path):
-                st.video(clip_path)
 
 # --- TAB 3: VOICE & SOUND ---
 with tab3:
@@ -482,7 +468,7 @@ with tab3:
 with tab4:
     st.subheader("Assemble & Download Final Movie")
     free_motion_style = st.selectbox(
-        "Free Camera Motion (for Scene Images)",
+        "Camera Motion",
         ["Auto Alternate", "Zoom In", "Zoom Out", "Pan Right", "Pan Left"],
     )
 
@@ -497,30 +483,20 @@ with tab4:
 
             try:
                 with st.spinner("Applying camera motion, stitching scenes, and exporting MP4..."):
-                    use_moving_clips = len(st.session_state.scene_clips) == len(st.session_state.audio_files)
-
                     for i, aud_p in enumerate(st.session_state.audio_files):
                         audio_clip = AudioFileClip(aud_p)
                         audio_clips.append(audio_clip)
                         target_duration = max(audio_clip.duration + 0.3, 1.0)
 
-                        if use_moving_clips and os.path.exists(st.session_state.scene_clips[i]):
-                            vid = VideoFileClip(st.session_state.scene_clips[i])
-                            if vid.duration < target_duration:
-                                loops = int(target_duration // vid.duration) + 1
-                                vid = concatenate_videoclips([vid] * loops)
-                            trimmed = apply_subclip(vid, 0, target_duration)
-                            scene_clip = apply_audio(trimmed, audio_clip)
-                        else:
-                            motion_clip = build_motion_clip(
-                                st.session_state.images[i],
-                                width,
-                                height,
-                                target_duration,
-                                motion_mode=free_motion_style,
-                                scene_idx=i,
-                            )
-                            scene_clip = apply_audio(motion_clip, audio_clip)
+                        motion_clip = build_motion_clip(
+                            st.session_state.images[i],
+                            width,
+                            height,
+                            target_duration,
+                            motion_mode=free_motion_style,
+                            scene_idx=i,
+                        )
+                        scene_clip = apply_audio(motion_clip, audio_clip)
                         clips.append(scene_clip)
 
                     final_video = concatenate_videoclips(clips, method="compose")
