@@ -129,44 +129,71 @@ with tab1:
     )
     num_scenes = st.slider("Number of Scenes", 3, 6, 4)
 
+    import time
+
     if st.button("✨ Polish Story & Create Scenes", type="primary"):
         if not api_key or not rough_story.strip():
             st.error("Please enter your Gemini API Key in the sidebar and write a rough story.")
         else:
-            try:
-                with st.spinner("Polishing grammar and structuring scenes..."):
-                    client = genai.Client(api_key=api_key.strip())
-                    prompt = f"""
-                    Fix and rewrite this rough story into an engaging {num_scenes}-scene animated short script.
-                    Return ONLY valid JSON as a list of objects, with no markdown formatting.
-                    Each object must have:
-                    - "narration": clear, emotional voiceover text (1-2 sentences)
-                    - "visual": detailed visual action description for that scene (no character appearance details, just action and background)
-                    Rough story: {rough_story.strip()}
-                    """
-                    response = client.models.generate_content(
-                        model="gemini-3.8-flash",
-                        contents=prompt,
-                    )
-                    raw_text = (response.text or "").strip()
-                    if raw_text.startswith("```"):
-                        lines = [line for line in raw_text.splitlines() if not line.strip().startswith("```")]
-                        raw_text = "\n".join(lines).strip()
+            fallback_models = [
+                "gemini-3.8-flash",
+                "gemini-3.6-flash",
+                "gemini-3.5-flash-lite",
+                "gemini-3.1-flash-lite",
+            ]
+            prompt = f"""
+            Fix and rewrite this rough story into an engaging {num_scenes}-scene animated short script.
+            Return ONLY valid JSON as a list of objects, with no markdown formatting.
+            Each object must have:
+            - "narration": clear, emotional voiceover text (1-2 sentences)
+            - "visual": detailed visual action description for that scene (no character appearance details, just action and background)
+            Rough story: {rough_story.strip()}
+            """
+            client = genai.Client(api_key=api_key.strip())
+            last_exc = None
+            parsed_scenes = None
 
-                    parsed_scenes = json.loads(raw_text)
-                    if not isinstance(parsed_scenes, list) or len(parsed_scenes) == 0:
-                        raise ValueError("Model did not return a valid scene list.")
+            with st.spinner("Polishing grammar and structuring scenes (with automatic fallback if busy)..."):
+                for model_name in fallback_models:
+                    for attempt in range(2):
+                        try:
+                            response = client.models.generate_content(
+                                model=model_name,
+                                contents=prompt,
+                            )
+                            raw_text = (response.text or "").strip()
+                            if raw_text.startswith("```"):
+                                lines = [
+                                    line for line in raw_text.splitlines()
+                                    if not line.strip().startswith("```")
+                                ]
+                                raw_text = "\n".join(lines).strip()
 
-                    st.session_state.scenes = [
-                        {
-                            "narration": str(item.get("narration", "")).strip(),
-                            "visual": str(item.get("visual", "")).strip(),
-                        }
-                        for item in parsed_scenes
-                    ]
-                    st.success("Script ready! Review below or move to Tab 2.")
-            except Exception as exc:
-                st.error(f"Could not generate script: {exc}")
+                            candidate = json.loads(raw_text)
+                            if isinstance(candidate, list) and len(candidate) > 0:
+                                parsed_scenes = candidate
+                                break
+                        except Exception as exc:
+                            last_exc = exc
+                            msg = str(exc)
+                            if "503" in msg or "UNAVAILABLE" in msg or "429" in msg:
+                                time.sleep(1.5 * (attempt + 1))
+                                continue
+                            break
+                    if parsed_scenes is not None:
+                        break
+
+            if parsed_scenes is not None:
+                st.session_state.scenes = [
+                    {
+                        "narration": str(item.get("narration", "")).strip(),
+                        "visual": str(item.get("visual", "")).strip(),
+                    }
+                    for item in parsed_scenes
+                ]
+                st.success("Script ready! Review below or move to Tab 2.")
+            else:
+                st.error(f"Could not generate script after retries/fallbacks: {last_exc}")
 
     if st.session_state.scenes:
         for i, scene in enumerate(st.session_state.scenes):
