@@ -39,7 +39,7 @@ except ModuleNotFoundError:
     MOVIEPY_V2 = True
 
 st.set_page_config(
-    page_title="AI Cinema & Reels Studio",
+    page_title="AI Cinema & Reels Studio Pro",
     page_icon="🎬",
     layout="wide",
 )
@@ -235,6 +235,7 @@ VIDEO_FX_CHOICES = [
 ]
 
 MOTION_CHOICES = ["Auto Alternate", "Zoom In", "Zoom Out", "Pan Right", "Pan Left"]
+SUBTITLE_POSITIONS = ["Bottom", "Center", "Top"]
 
 for key, default in [
     ("scenes", [dict(s) for s in DEFAULT_SCENES]),
@@ -245,14 +246,13 @@ for key, default in [
     ("audio_files", []),
     ("bgm_audio_path", ""),
     ("bgm_volume", 0.22),
+    ("bgm_duck_enabled", True),
+    ("bgm_duck_volume", 0.08),
     ("voice_volume", 1.0),
     ("sfx_volume", 0.75),
-    ("own_voice_table", {}),
     ("locked_character_prompt", DEFAULT_CHAR_PROMPT),
     ("exact_character_count", 1),
     ("lock_character_enabled", False),
-    ("populated_script_lines", []),
-    ("populated_script_lang", "English"),
     ("gen_batch_id", 0),
     ("selected_clip_idx", 0),
     ("format_preset", "9:16 Reels / Shorts"),
@@ -260,6 +260,8 @@ for key, default in [
     ("playback_speed", 1.0),
     ("custom_title_text", ""),
     ("custom_title_lang", "English"),
+    ("subtitle_position", "Bottom"),
+    ("subtitle_scale", 1.0),
     ("editor_brightness", 1.0),
     ("editor_contrast", 1.0),
     ("editor_saturation", 1.0),
@@ -273,14 +275,69 @@ for key, default in [
     if key not in st.session_state:
         st.session_state[key] = default
 
-for idx, sc in enumerate(st.session_state.scenes):
-    st.session_state.setdefault(f"nar_{idx}", sc.get("narration", ""))
-    st.session_state.setdefault(f"kn_script_{idx}", sc.get("kannada_narration", ""))
-    st.session_state.setdefault(f"vis_{idx}", sc.get("visual", ""))
-    st.session_state.setdefault(f"emo_{idx}", sc.get("emotion", "Expressive"))
-    st.session_state.setdefault(f"mot_{idx}", sc.get("motion", "Auto Alternate"))
-    st.session_state.setdefault(f"broll_{idx}", sc.get("suggested_broll", "Establishing cinematic B-roll shot"))
-    st.session_state.setdefault(f"sfx_sug_{idx}", sc.get("suggested_sfx", "None"))
+
+def sync_scene_widget_states(scenes_list):
+    """Push scene list fields into Streamlit widget keys cleanly."""
+    for idx, sc in enumerate(scenes_list):
+        st.session_state[f"nar_{idx}"] = sc.get("narration", "")
+        st.session_state[f"kn_script_{idx}"] = sc.get("kannada_narration", "")
+        st.session_state[f"vis_{idx}"] = sc.get("visual", "")
+        st.session_state[f"emo_{idx}"] = sc.get("emotion", "Expressive")
+        st.session_state[f"mot_{idx}"] = sc.get("motion", "Auto Alternate")
+        st.session_state[f"broll_{idx}"] = sc.get("suggested_broll", "Establishing cinematic B-roll shot")
+        st.session_state[f"sfx_sug_{idx}"] = sc.get("suggested_sfx", "None")
+        st.session_state[f"fx_sc_{idx}"] = st.session_state.scene_fx_overrides.get(
+            idx, sc.get("suggested_fx", "None")
+        )
+
+
+sync_scene_widget_states(st.session_state.scenes)
+
+
+def swap_scenes_and_media(idx_a, idx_b):
+    """Reorder two scenes along with their associated images, videos, audio, and FX."""
+    n_sc = len(st.session_state.scenes)
+    if not (0 <= idx_a < n_sc and 0 <= idx_b < n_sc and idx_a != idx_b):
+        return
+
+    st.session_state.scenes[idx_a], st.session_state.scenes[idx_b] = (
+        st.session_state.scenes[idx_b],
+        st.session_state.scenes[idx_a],
+    )
+
+    for list_key in ("images", "scene_videos", "audio_files"):
+        lst = list(st.session_state.get(list_key) or [])
+        if idx_a < len(lst) and idx_b < len(lst):
+            lst[idx_a], lst[idx_b] = lst[idx_b], lst[idx_a]
+            st.session_state[list_key] = lst
+
+    sfx_map = dict(st.session_state.scene_audio_fx)
+    sfx_a = sfx_map.get(idx_a)
+    sfx_b = sfx_map.get(idx_b)
+    if sfx_b is not None:
+        sfx_map[idx_a] = sfx_b
+    else:
+        sfx_map.pop(idx_a, None)
+    if sfx_a is not None:
+        sfx_map[idx_b] = sfx_a
+    else:
+        sfx_map.pop(idx_b, None)
+    st.session_state.scene_audio_fx = sfx_map
+
+    fx_map = dict(st.session_state.scene_fx_overrides)
+    fx_a = fx_map.get(idx_a)
+    fx_b = fx_map.get(idx_b)
+    if fx_b is not None:
+        fx_map[idx_a] = fx_b
+    else:
+        fx_map.pop(idx_a, None)
+    if fx_a is not None:
+        fx_map[idx_b] = fx_a
+    else:
+        fx_map.pop(idx_b, None)
+    st.session_state.scene_fx_overrides = fx_map
+
+    sync_scene_widget_states(st.session_state.scenes)
 
 
 def run_async(coro):
@@ -815,33 +872,50 @@ def get_script_lines_for_language(scenes, script_lang="English", gemini_key=""):
     ]
 
 
-def draw_subtitle_on_frame(frame_pil, subtitle_text, target_w, target_h, lang="English"):
-    """Draw a readable subtitle/caption banner near the bottom of a scene frame."""
+def draw_subtitle_on_frame(
+    frame_pil,
+    subtitle_text,
+    target_w,
+    target_h,
+    lang="English",
+    position="Bottom",
+    scale=1.0,
+):
+    """Draw a readable subtitle/caption banner at Bottom, Center, or Top with adjustable scale."""
     if not subtitle_text or not subtitle_text.strip() or lang == "None":
         return frame_pil
 
     img_rgba = frame_pil.convert("RGBA")
     draw = ImageDraw.Draw(img_rgba)
 
-    font_size = max(26, int(round(target_w * 0.038)))
+    safe_scale = max(0.65, min(1.6, float(scale or 1.0)))
+    font_size = max(22, int(round(target_w * 0.036 * safe_scale)))
     font, _ = _find_font(font_size, lang=lang)
     lang_code = "kn" if lang == "Kannada" else "en"
 
-    chars_per_line = max(14, int(target_w / max(11, font_size * 0.64)))
+    chars_per_line = max(12, int(target_w / max(10, font_size * 0.62)))
     wrapped_lines = textwrap.wrap(subtitle_text.strip(), width=chars_per_line)[:3]
     if not wrapped_lines:
         return frame_pil
 
     line_h = font_size + 14
     box_h = len(wrapped_lines) * line_h + 24
-    pad_x = max(20, int(target_w * 0.04))
-    box_top = max(16, target_h - box_h - max(42, int(target_h * 0.07)))
-    box_bot = min(target_h - 16, box_top + box_h)
+    pad_x = max(18, int(target_w * 0.04))
+
+    if position == "Top":
+        box_top = max(18, int(target_h * 0.06))
+    elif position == "Center":
+        box_top = max(18, (target_h - box_h) // 2)
+    else:
+        box_top = max(18, target_h - box_h - max(42, int(target_h * 0.07)))
+
+    box_bot = min(target_h - 14, box_top + box_h)
+    box_top = max(14, box_bot - box_h)
 
     draw.rounded_rectangle(
         [pad_x, box_top, target_w - pad_x, box_bot],
         radius=14,
-        fill=(10, 14, 22, 215),
+        fill=(10, 14, 22, 218),
     )
 
     cur_y = box_top + 12
@@ -854,7 +928,7 @@ def draw_subtitle_on_frame(frame_pil, subtitle_text, target_w, target_h, lang="E
         text_x = max(pad_x + 12, (target_w - text_w) // 2)
 
         for ox, oy, col in [
-            (text_x + 2, cur_y + 2, (0, 0, 0, 240)),
+            (text_x + 2, cur_y + 2, (0, 0, 0, 245)),
             (text_x, cur_y, (255, 250, 220, 255)),
         ]:
             try:
@@ -875,6 +949,8 @@ def build_motion_clip(
     scene_idx=0,
     subtitle_text="",
     subtitle_lang="None",
+    subtitle_pos="Bottom",
+    subtitle_scale=1.0,
     enable_char_motion=True,
     brightness=1.0,
     contrast=1.0,
@@ -961,6 +1037,8 @@ def build_motion_clip(
                 target_w=target_w,
                 target_h=target_h,
                 lang=subtitle_lang,
+                position=subtitle_pos,
+                scale=subtitle_scale,
             )
 
         frame_pil = ensure_exact_size(frame_pil, target_w, target_h, bg_mode="Crop Fill")
@@ -981,6 +1059,8 @@ def render_single_scene_video(
     scene_idx=0,
     subtitle_text="",
     subtitle_lang="None",
+    subtitle_pos="Bottom",
+    subtitle_scale=1.0,
     enable_char_motion=True,
     brightness=1.0,
     contrast=1.0,
@@ -999,6 +1079,8 @@ def render_single_scene_video(
         scene_idx=scene_idx,
         subtitle_text=subtitle_text,
         subtitle_lang=subtitle_lang,
+        subtitle_pos=subtitle_pos,
+        subtitle_scale=subtitle_scale,
         enable_char_motion=enable_char_motion,
         brightness=brightness,
         contrast=contrast,
@@ -1021,6 +1103,143 @@ def render_single_scene_video(
             clip.close()
         except Exception:
             pass
+
+
+def build_uploaded_video_clip(
+    vid_path,
+    target_w,
+    target_h,
+    clip_dur,
+    scene_idx=0,
+    subtitle_text="",
+    subtitle_lang="None",
+    subtitle_pos="Bottom",
+    subtitle_scale=1.0,
+    brightness=1.0,
+    contrast=1.0,
+    saturation=1.0,
+    blur_radius=0.0,
+    video_fx="None",
+    bg_mode="Blur Canvas",
+):
+    """Process an existing video clip so canvas size, color/FX, and subtitles stay consistent."""
+    src = None
+    try:
+        src = VideoFileClip(vid_path)
+        native_dur = max(0.5, float(src.duration or clip_dur))
+        if native_dur < clip_dur and hasattr(src, "loop"):
+            timed = apply_duration(src.loop(duration=clip_dur), clip_dur)
+        else:
+            timed = subclip_safe(src, 0.0, min(native_dur, clip_dur))
+            timed = apply_duration(timed, clip_dur)
+
+        needs_visual_pass = (
+            abs(brightness - 1.0) > 1e-3
+            or abs(contrast - 1.0) > 1e-3
+            or abs(saturation - 1.0) > 1e-3
+            or (blur_radius and blur_radius > 0.05)
+            or (video_fx and video_fx != "None")
+            or (subtitle_lang != "None" and bool(subtitle_text))
+            or (int(getattr(src, "w", target_w)) != target_w)
+            or (int(getattr(src, "h", target_h)) != target_h)
+        )
+
+        if not needs_visual_pass:
+            return timed, [src]
+
+        os.makedirs("video_passes", exist_ok=True)
+        step_dt = 0.25
+        n_steps = max(4, min(40, int(math.ceil(clip_dur / step_dt))))
+        actual_step = clip_dur / n_steps
+        step_clips = []
+
+        for idx_f in range(n_steps):
+            sample_t = min(max(0.0, (idx_f + 0.5) * actual_step), max(0.0, float(timed.duration or clip_dur) - 0.02))
+            frame_arr = timed.get_frame(sample_t)
+            pil_f = Image.fromarray(np.asarray(frame_arr, dtype=np.uint8))
+            pil_f = ensure_exact_size(pil_f, target_w, target_h, bg_mode=bg_mode)
+            pil_f = apply_pil_effects(
+                pil_f,
+                brightness=brightness,
+                contrast=contrast,
+                saturation=saturation,
+                blur_radius=blur_radius,
+                video_fx=video_fx,
+            )
+            if subtitle_lang != "None" and subtitle_text:
+                pil_f = draw_subtitle_on_frame(
+                    pil_f,
+                    subtitle_text=subtitle_text,
+                    target_w=target_w,
+                    target_h=target_h,
+                    lang=subtitle_lang,
+                    position=subtitle_pos,
+                    scale=subtitle_scale,
+                )
+            p_f = os.path.join("video_passes", f"vp_{scene_idx}_{idx_f}.jpg")
+            pil_f.save(p_f, format="JPEG", quality=90)
+            step_clips.append(apply_duration(ImageClip(p_f), actual_step))
+
+        merged = concatenate_videoclips(step_clips, method="chain")
+        if timed.audio is not None:
+            merged = apply_audio(merged, timed.audio)
+        return merged, [src, timed]
+    except Exception:
+        if src is not None:
+            try:
+                src.close()
+            except Exception:
+                pass
+        raise
+
+
+def build_ducked_bgm_track(bgm_path, total_duration, voice_intervals, normal_vol=0.22, duck_vol=0.08):
+    """Build a BGM clip across total_duration that automatically ducks during voiceover intervals."""
+    raw = AudioFileClip(bgm_path)
+    dur = max(0.5, float(total_duration))
+    if (raw.duration or 0.0) < dur and hasattr(raw, "loop"):
+        base_bgm = apply_duration(raw.loop(duration=dur), dur)
+    else:
+        base_bgm = apply_duration(raw, dur)
+
+    if not voice_intervals:
+        return scale_audio_volume(base_bgm, normal_vol), [raw, base_bgm]
+
+    sorted_iv = sorted(
+        (max(0.0, float(s)), min(dur, float(e)))
+        for s, e in voice_intervals
+        if float(e) > float(s)
+    )
+    merged_iv = []
+    for s, e in sorted_iv:
+        if not merged_iv or s > merged_iv[-1][1] + 0.05:
+            merged_iv.append([s, e])
+        else:
+            merged_iv[-1][1] = max(merged_iv[-1][1], e)
+
+    segments = []
+    handles = [raw, base_bgm]
+    cursor = 0.0
+    for s, e in merged_iv:
+        if s > cursor + 0.02:
+            seg_n = subclip_safe(base_bgm, cursor, s)
+            handles.append(seg_n)
+            segments.append(scale_audio_volume(seg_n, normal_vol))
+        if e > s + 0.02:
+            seg_d = subclip_safe(base_bgm, s, e)
+            handles.append(seg_d)
+            segments.append(scale_audio_volume(seg_d, duck_vol))
+        cursor = max(cursor, e)
+
+    if cursor < dur - 0.02:
+        seg_tail = subclip_safe(base_bgm, cursor, dur)
+        handles.append(seg_tail)
+        segments.append(scale_audio_volume(seg_tail, normal_vol))
+
+    if not segments:
+        return scale_audio_volume(base_bgm, duck_vol), handles
+
+    return concatenate_videoclips(segments, method="chain"), handles
 
 
 def build_local_bypass_scene(prompt_text, target_w, target_h, scene_idx, emotion_label=""):
@@ -1387,6 +1606,98 @@ def apply_clip_transition(clips, transition_name="Crossfade", trans_sec=0.5):
     return CompositeVideoClip(positioned)
 
 
+def export_project_json():
+    """Serialize studio state into a portable JSON project payload."""
+    payload = {
+        "version": "2.1-pro",
+        "format_preset": st.session_state.format_preset,
+        "bg_fit_mode": st.session_state.bg_fit_mode,
+        "playback_speed": st.session_state.playback_speed,
+        "custom_title_text": st.session_state.custom_title_text,
+        "custom_title_lang": st.session_state.custom_title_lang,
+        "subtitle_position": st.session_state.subtitle_position,
+        "subtitle_scale": st.session_state.subtitle_scale,
+        "editor_brightness": st.session_state.editor_brightness,
+        "editor_contrast": st.session_state.editor_contrast,
+        "editor_saturation": st.session_state.editor_saturation,
+        "editor_blur": st.session_state.editor_blur,
+        "editor_transition": st.session_state.editor_transition,
+        "editor_transition_sec": st.session_state.editor_transition_sec,
+        "editor_video_fx": st.session_state.editor_video_fx,
+        "bgm_volume": st.session_state.bgm_volume,
+        "bgm_duck_enabled": st.session_state.bgm_duck_enabled,
+        "bgm_duck_volume": st.session_state.bgm_duck_volume,
+        "voice_volume": st.session_state.voice_volume,
+        "sfx_volume": st.session_state.sfx_volume,
+        "locked_character_prompt": st.session_state.locked_character_prompt,
+        "exact_character_count": st.session_state.exact_character_count,
+        "lock_character_enabled": st.session_state.lock_character_enabled,
+        "scenes": st.session_state.scenes,
+        "scene_fx_overrides": {str(k): v for k, v in st.session_state.scene_fx_overrides.items()},
+    }
+    return json.dumps(payload, ensure_ascii=False, indent=2)
+
+
+def import_project_json(raw_json_str):
+    """Restore studio settings and scenes from a JSON project file."""
+    data = json.loads(raw_json_str)
+    if not isinstance(data, dict):
+        raise ValueError("Invalid project JSON structure.")
+
+    if data.get("format_preset") in FORMAT_PRESETS:
+        st.session_state.format_preset = data["format_preset"]
+    if data.get("bg_fit_mode") in ("Blur Canvas", "Crop Fill"):
+        st.session_state.bg_fit_mode = data["bg_fit_mode"]
+    if "playback_speed" in data:
+        st.session_state.playback_speed = float(data["playback_speed"])
+    if "custom_title_text" in data:
+        st.session_state.custom_title_text = str(data["custom_title_text"])
+    if data.get("custom_title_lang") in ("English", "Kannada"):
+        st.session_state.custom_title_lang = data["custom_title_lang"]
+    if data.get("subtitle_position") in SUBTITLE_POSITIONS:
+        st.session_state.subtitle_position = data["subtitle_position"]
+    if "subtitle_scale" in data:
+        st.session_state.subtitle_scale = float(data["subtitle_scale"])
+    for k in (
+        "editor_brightness",
+        "editor_contrast",
+        "editor_saturation",
+        "editor_blur",
+        "editor_transition_sec",
+        "bgm_volume",
+        "bgm_duck_volume",
+        "voice_volume",
+        "sfx_volume",
+    ):
+        if k in data:
+            st.session_state[k] = float(data[k])
+    if "bgm_duck_enabled" in data:
+        st.session_state.bgm_duck_enabled = bool(data["bgm_duck_enabled"])
+    if data.get("editor_transition") in ("None", "Crossfade", "Fade", "Slide Left", "Slide Right"):
+        st.session_state.editor_transition = data["editor_transition"]
+    if data.get("editor_video_fx") in VIDEO_FX_CHOICES:
+        st.session_state.editor_video_fx = data["editor_video_fx"]
+    if "locked_character_prompt" in data:
+        st.session_state.locked_character_prompt = str(data["locked_character_prompt"])
+    if "exact_character_count" in data:
+        st.session_state.exact_character_count = int(data["exact_character_count"])
+    if "lock_character_enabled" in data:
+        st.session_state.lock_character_enabled = bool(data["lock_character_enabled"])
+
+    if isinstance(data.get("scene_fx_overrides"), dict):
+        restored_fx = {}
+        for k, v in data["scene_fx_overrides"].items():
+            try:
+                restored_fx[int(k)] = str(v)
+            except Exception:
+                pass
+        st.session_state.scene_fx_overrides = restored_fx
+
+    if isinstance(data.get("scenes"), list) and len(data["scenes"]) > 0:
+        st.session_state.scenes = data["scenes"][:10]
+        sync_scene_widget_states(st.session_state.scenes)
+
+
 # --- TOP STUDIO BANNER ---
 st.markdown(
     """
@@ -1395,13 +1706,13 @@ st.markdown(
             <span class="studio-pill">AI STUDIO PRO</span>
             <span style="font-weight:700;font-size:17px;">Movie, Shorts & Reels Creation Suite</span>
         </div>
-        <div class="studio-sub">Laptop & Mobile Friendly • AI B-Roll & FX • Trim & Split • Voice, BGM & SFX</div>
+        <div class="studio-sub">Laptop & Mobile Friendly • AI B-Roll & FX • Trim, Split & Reorder • Voice Ducking & Project Save</div>
     </div>
     """,
     unsafe_allow_html=True,
 )
 
-# --- SIDEBAR: FORMAT, AI KEYS & CHARACTER COMMANDS ---
+# --- SIDEBAR: FORMAT, AI KEYS, CHARACTER COMMANDS & PROJECT SAVE/LOAD ---
 with st.sidebar:
     st.header("🎬 Format & AI Setup")
     st.session_state.format_preset = st.selectbox(
@@ -1442,8 +1753,26 @@ with st.sidebar:
     st.session_state.locked_character_prompt = st.text_area(
         "Character / Background / Nature Command",
         value=st.session_state.locked_character_prompt,
-        height=100,
+        height=95,
     )
+
+    st.divider()
+    st.subheader("💾 Project Save & Load")
+    st.download_button(
+        label="⬇️ Save Project (.json)",
+        data=export_project_json(),
+        file_name="ai_studio_project.json",
+        mime="application/json",
+        use_container_width=True,
+    )
+    proj_up = st.file_uploader("Load Project (.json)", type=["json"], key="proj_json_loader")
+    if proj_up is not None and st.button("📂 Restore Project", key="btn_restore_proj", use_container_width=True):
+        try:
+            import_project_json(proj_up.getvalue().decode("utf-8"))
+            st.success("Project settings and scenes restored!")
+            st.rerun()
+        except Exception as exc:
+            st.error(f"Could not load project: {exc}")
 
 # --- COMPACT LIVE PREVIEW STAGE, STUDIO CONTROLS & CLIP TRIM/SPLIT ---
 with st.expander("🖥️ Compact Preview Stage, Studio Controls & Clip Trim/Split", expanded=True):
@@ -1459,6 +1788,16 @@ with st.expander("🖥️ Compact Preview Stage, Studio Controls & Clip Trim/Spl
             horizontal=True,
             key="top_monitor_mode",
         )
+
+        preview_caption_txt = ""
+        if st.session_state.custom_title_text.strip():
+            preview_caption_txt = st.session_state.custom_title_text.strip()
+        elif st.session_state.scenes:
+            sc_cur_idx = min(int(st.session_state.selected_clip_idx), len(st.session_state.scenes) - 1)
+            if st.session_state.custom_title_lang == "Kannada":
+                preview_caption_txt = (st.session_state.scenes[sc_cur_idx].get("kannada_narration") or "").strip()
+            else:
+                preview_caption_txt = (st.session_state.scenes[sc_cur_idx].get("narration") or "").strip()
 
         st.markdown('<div class="compact-preview-box">', unsafe_allow_html=True)
         if monitor_mode == "Live Frame + Effects" and avail_imgs:
@@ -1477,10 +1816,12 @@ with st.expander("🖥️ Compact Preview Stage, Studio Controls & Clip Trim/Spl
             if st.session_state.custom_title_text.strip():
                 prev_img = draw_subtitle_on_frame(
                     prev_img,
-                    subtitle_text=st.session_state.custom_title_text,
+                    subtitle_text=preview_caption_txt,
                     target_w=width,
                     target_h=height,
                     lang=st.session_state.custom_title_lang,
+                    position=st.session_state.subtitle_position,
+                    scale=st.session_state.subtitle_scale,
                 )
             st.image(
                 prev_img,
@@ -1509,10 +1850,12 @@ with st.expander("🖥️ Compact Preview Stage, Studio Controls & Clip Trim/Spl
             if st.session_state.custom_title_text.strip():
                 fallback_img = draw_subtitle_on_frame(
                     fallback_img,
-                    subtitle_text=st.session_state.custom_title_text,
+                    subtitle_text=preview_caption_txt,
                     target_w=width,
                     target_h=height,
                     lang=st.session_state.custom_title_lang,
+                    position=st.session_state.subtitle_position,
+                    scale=st.session_state.subtitle_scale,
                 )
             st.image(
                 fallback_img,
@@ -1696,14 +2039,32 @@ with st.expander("🖥️ Compact Preview Stage, Studio Controls & Clip Trim/Spl
                 value=float(st.session_state.playback_speed),
                 key="speed_slider",
             )
+            tf_c1, tf_c2 = st.columns(2)
+            with tf_c1:
+                st.session_state.subtitle_position = st.selectbox(
+                    "Subtitle Position",
+                    SUBTITLE_POSITIONS,
+                    index=SUBTITLE_POSITIONS.index(st.session_state.subtitle_position),
+                    key="sub_pos_box",
+                )
+            with tf_c2:
+                st.session_state.subtitle_scale = st.slider(
+                    "Subtitle Size Scale",
+                    0.7,
+                    1.5,
+                    float(st.session_state.subtitle_scale),
+                    0.05,
+                    key="sub_scale_sl",
+                )
+
             st.session_state.custom_title_text = st.text_input(
-                "Custom Title / Hook Text on Preview",
+                "Hook / Title Overlay Text",
                 value=st.session_state.custom_title_text,
                 placeholder="Example: Watch till the end! / ಅಚ್ಚರಿಯ ತಿರುವು!",
                 key="title_overlay_input",
             )
             st.session_state.custom_title_lang = st.selectbox(
-                "Text Language",
+                "Overlay / Preview Text Language",
                 ["English", "Kannada"],
                 index=["English", "Kannada"].index(st.session_state.custom_title_lang),
                 key="title_overlay_lang",
@@ -1795,19 +2156,14 @@ with tab1:
                 rough_story, num_scenes, st.session_state.locked_character_prompt
             )
             for idx, sc in enumerate(st.session_state.scenes):
-                st.session_state[f"nar_{idx}"] = sc["narration"]
-                st.session_state[f"kn_script_{idx}"] = sc["kannada_narration"]
-                st.session_state[f"vis_{idx}"] = sc["visual"]
-                st.session_state[f"emo_{idx}"] = sc["emotion"]
-                st.session_state[f"mot_{idx}"] = sc.get("motion", "Auto Alternate")
-                st.session_state[f"broll_{idx}"] = sc.get("suggested_broll", "")
-                st.session_state[f"sfx_sug_{idx}"] = sc.get("suggested_sfx", "None")
                 st.session_state.scene_fx_overrides[idx] = sc.get("suggested_fx", "None")
                 if sc.get("suggested_sfx") and sc["suggested_sfx"] != "None":
                     p_auto_sfx = download_fx_audio(sc["suggested_sfx"], PRESET_AUDIO_EFFECTS.get(sc["suggested_sfx"], ""))
                     if p_auto_sfx:
                         st.session_state.scene_audio_fx[idx] = p_auto_sfx
+            sync_scene_widget_states(st.session_state.scenes)
             st.success(f"Created {len(st.session_state.scenes)} smart scenes with AI B-roll, motion & FX suggestions.")
+            st.rerun()
         else:
             fallback_models = [
                 "gemini-3.8-flash",
@@ -1886,43 +2242,31 @@ with tab1:
                     normalized, num_scenes, rough_story, st.session_state.locked_character_prompt
                 )
                 for idx, sc in enumerate(st.session_state.scenes):
-                    st.session_state[f"nar_{idx}"] = sc["narration"]
-                    st.session_state[f"kn_script_{idx}"] = sc["kannada_narration"]
-                    st.session_state[f"vis_{idx}"] = sc["visual"]
-                    st.session_state[f"emo_{idx}"] = sc["emotion"]
-                    st.session_state[f"mot_{idx}"] = sc.get("motion", "Auto Alternate")
-                    st.session_state[f"broll_{idx}"] = sc.get("suggested_broll", "")
-                    st.session_state[f"sfx_sug_{idx}"] = sc.get("suggested_sfx", "None")
                     st.session_state.scene_fx_overrides[idx] = sc.get("suggested_fx", "None")
+                sync_scene_widget_states(st.session_state.scenes)
                 st.success(f"Generated {len(st.session_state.scenes)} AI-directed scenes!")
+                st.rerun()
             else:
                 st.session_state.scenes = build_fallback_scenes_from_rough_story(
                     rough_story, num_scenes, st.session_state.locked_character_prompt
                 )
                 for idx, sc in enumerate(st.session_state.scenes):
-                    st.session_state[f"nar_{idx}"] = sc["narration"]
-                    st.session_state[f"kn_script_{idx}"] = sc["kannada_narration"]
-                    st.session_state[f"vis_{idx}"] = sc["visual"]
-                    st.session_state[f"emo_{idx}"] = sc["emotion"]
-                    st.session_state[f"mot_{idx}"] = sc.get("motion", "Auto Alternate")
-                    st.session_state[f"broll_{idx}"] = sc.get("suggested_broll", "")
-                    st.session_state[f"sfx_sug_{idx}"] = sc.get("suggested_sfx", "None")
                     st.session_state.scene_fx_overrides[idx] = sc.get("suggested_fx", "None")
+                sync_scene_widget_states(st.session_state.scenes)
                 st.warning(f"Used smart local scene builder ({last_exc}).")
+                st.rerun()
 
     if ai_sug_clicked:
         with st.spinner("Analyzing scenes for AI B-roll, camera motion & video FX suggestions..."):
             suggested_list = ai_suggest_broll_and_fx_for_scenes(api_key, st.session_state.scenes)
             st.session_state.scenes = suggested_list
             for idx, sc in enumerate(suggested_list):
-                st.session_state[f"broll_{idx}"] = sc.get("suggested_broll", "")
-                st.session_state[f"mot_{idx}"] = sc.get("motion", "Auto Alternate")
-                st.session_state[f"sfx_sug_{idx}"] = sc.get("suggested_sfx", "None")
                 st.session_state.scene_fx_overrides[idx] = sc.get("suggested_fx", "None")
                 if sc.get("suggested_sfx") and sc["suggested_sfx"] != "None":
                     p_sfx = download_fx_audio(sc["suggested_sfx"], PRESET_AUDIO_EFFECTS.get(sc["suggested_sfx"], ""))
                     if p_sfx:
                         st.session_state.scene_audio_fx[idx] = p_sfx
+            sync_scene_widget_states(suggested_list)
         st.success("Applied AI B-roll, motion, video FX & sound FX suggestions across all scenes!")
         st.rerun()
 
@@ -1943,9 +2287,24 @@ with tab1:
             st.rerun()
 
     if st.session_state.scenes:
-        st.markdown(f"### Scene Script, AI B-Roll & FX Cards ({len(st.session_state.scenes)} Scenes)")
+        st.markdown(f"### Scene Script, Reorder, AI B-Roll & FX Cards ({len(st.session_state.scenes)} Scenes)")
         for i, scene in enumerate(st.session_state.scenes):
             with st.expander(f"Scene {i + 1} • {scene.get('emotion', 'Expressive')}", expanded=(i < 2)):
+                mv1, mv2 = st.columns(2)
+                with mv1:
+                    if st.button("⬆️ Move Up", key=f"mv_up_{i}", disabled=(i == 0), use_container_width=True):
+                        swap_scenes_and_media(i, i - 1)
+                        st.rerun()
+                with mv2:
+                    if st.button(
+                        "⬇️ Move Down",
+                        key=f"mv_dn_{i}",
+                        disabled=(i == len(st.session_state.scenes) - 1),
+                        use_container_width=True,
+                    ):
+                        swap_scenes_and_media(i, i + 1)
+                        st.rerun()
+
                 c_left, c_right = st.columns(2)
                 with c_left:
                     nar_v = st.text_area(f"English Narration (Scene {i + 1})", value=scene.get("narration", ""), key=f"nar_{i}")
@@ -2094,6 +2453,8 @@ with tab2:
                     scene_idx=idx,
                     subtitle_text=scene_subtitles[idx] if idx < len(scene_subtitles) else "",
                     subtitle_lang=tab2_sub_lang,
+                    subtitle_pos=st.session_state.subtitle_position,
+                    subtitle_scale=st.session_state.subtitle_scale,
                     enable_char_motion=True,
                     brightness=st.session_state.editor_brightness,
                     contrast=st.session_state.editor_contrast,
@@ -2163,14 +2524,30 @@ with tab3:
             st.error(f"Voiceover generation error: {exc}")
 
     st.divider()
-    st.markdown("#### Mix Levels (Voice, Background Music & Sound FX)")
+    st.markdown("#### Mix Levels & Auto-Ducking (Voice, Background Music & Sound FX)")
     m1, m2, m3 = st.columns(3)
     with m1:
         st.session_state.voice_volume = st.slider("Voice Volume", 0.0, 1.5, float(st.session_state.voice_volume), 0.05)
     with m2:
-        st.session_state.bgm_volume = st.slider("BGM Volume", 0.0, 0.8, float(st.session_state.bgm_volume), 0.02)
+        st.session_state.bgm_volume = st.slider("Normal BGM Volume", 0.0, 0.8, float(st.session_state.bgm_volume), 0.02)
     with m3:
         st.session_state.sfx_volume = st.slider("Sound FX Volume", 0.0, 1.5, float(st.session_state.sfx_volume), 0.05)
+
+    d1, d2 = st.columns(2)
+    with d1:
+        st.session_state.bgm_duck_enabled = st.checkbox(
+            "Auto-duck BGM volume while voiceover speaks",
+            value=bool(st.session_state.bgm_duck_enabled),
+        )
+    with d2:
+        st.session_state.bgm_duck_volume = st.slider(
+            "Ducked BGM Volume",
+            0.0,
+            0.4,
+            float(st.session_state.bgm_duck_volume),
+            0.02,
+            disabled=not st.session_state.bgm_duck_enabled,
+        )
 
     if st.session_state.bgm_audio_path and os.path.exists(st.session_state.bgm_audio_path):
         st.caption(f"Active BGM: `{os.path.basename(st.session_state.bgm_audio_path)}`")
@@ -2192,8 +2569,8 @@ with tab4:
     st.caption(
         f"Format: `{st.session_state.format_preset}` (`{width}x{height}`) • "
         f"Speed: `{st.session_state.playback_speed}x` • "
-        f"Transition: `{st.session_state.editor_transition}` • "
-        f"Effect: `{st.session_state.editor_video_fx}`"
+        f"Subtitles: `{final_sub_lang}` (`{st.session_state.subtitle_position}`, `{st.session_state.subtitle_scale}x`) • "
+        f"BGM Ducking: `{'On' if st.session_state.bgm_duck_enabled else 'Off'}`"
     )
 
     if st.button("🎬 Render Final MP4 Video", type="primary"):
@@ -2204,9 +2581,9 @@ with tab4:
             clips = []
             src_vids = []
             aud_list = []
-            bgm_clip = None
+            bgm_handles = []
             final_vid = None
-            out_mp4 = f"final_studio_b{st.session_state.gen_batch_id}.mp4"
+            out_mp4 = f"final_studio_b{st.session_state.gen_batch_id}_{int(time.time())}.mp4"
 
             try:
                 total_slots = max(len(st.session_state.scene_videos), len(st.session_state.images))
@@ -2221,17 +2598,22 @@ with tab4:
                 while len(sub_lines) < total_slots:
                     sub_lines.append("")
 
-                with st.spinner("Rendering your final video..."):
+                voice_intervals = []
+                running_t = 0.0
+
+                with st.spinner("Rendering your final video with studio FX, subtitles & audio ducking..."):
                     for i in range(total_slots):
                         v_aud = st.session_state.audio_files[i] if i < len(st.session_state.audio_files) else None
                         s_sfx = st.session_state.scene_audio_fx.get(i)
 
                         mixed_parts = []
                         dur_candidates = [4.0]
+                        vo_dur = 0.0
                         if v_aud and os.path.exists(v_aud):
                             va = AudioFileClip(v_aud)
                             aud_list.append(va)
-                            dur_candidates.append(float(va.duration or 3.0) + 0.25)
+                            vo_dur = float(va.duration or 3.0)
+                            dur_candidates.append(vo_dur + 0.25)
                             mixed_parts.append(scale_audio_volume(va, st.session_state.voice_volume))
 
                         if s_sfx and os.path.exists(s_sfx):
@@ -2244,25 +2626,38 @@ with tab4:
                         caption_txt = sub_lines[i]
                         if st.session_state.custom_title_text.strip():
                             caption_txt = (
-                                f"{caption_txt} • {st.session_state.custom_title_text.strip()}"
+                                f"{st.session_state.custom_title_text.strip()} — {caption_txt}"
                                 if caption_txt
                                 else st.session_state.custom_title_text.strip()
                             )
 
+                        sc_fx = st.session_state.scene_fx_overrides.get(i, st.session_state.editor_video_fx)
+
                         if i < len(st.session_state.scene_videos) and os.path.exists(st.session_state.scene_videos[i]):
-                            sv = VideoFileClip(st.session_state.scene_videos[i])
-                            src_vids.append(sv)
-                            if (sv.duration or 0) < clip_dur and hasattr(sv, "loop"):
-                                c_item = apply_duration(sv.loop(duration=clip_dur), clip_dur)
-                            else:
-                                c_item = apply_duration(sv, clip_dur)
+                            c_item, v_handles = build_uploaded_video_clip(
+                                vid_path=st.session_state.scene_videos[i],
+                                target_w=width,
+                                target_h=height,
+                                clip_dur=clip_dur,
+                                scene_idx=i,
+                                subtitle_text=caption_txt,
+                                subtitle_lang=final_sub_lang,
+                                subtitle_pos=st.session_state.subtitle_position,
+                                subtitle_scale=st.session_state.subtitle_scale,
+                                brightness=st.session_state.editor_brightness,
+                                contrast=st.session_state.editor_contrast,
+                                saturation=st.session_state.editor_saturation,
+                                blur_radius=st.session_state.editor_blur,
+                                video_fx=sc_fx,
+                                bg_mode=st.session_state.bg_fit_mode,
+                            )
+                            src_vids.extend(v_handles)
                         else:
                             sc_motion = (
                                 st.session_state.scenes[i].get("motion", final_motion_mode)
                                 if i < len(st.session_state.scenes)
                                 else final_motion_mode
                             )
-                            sc_fx = st.session_state.scene_fx_overrides.get(i, st.session_state.editor_video_fx)
                             c_item = build_motion_clip(
                                 img_path=st.session_state.images[i],
                                 target_w=width,
@@ -2272,6 +2667,8 @@ with tab4:
                                 scene_idx=i,
                                 subtitle_text=caption_txt,
                                 subtitle_lang=final_sub_lang,
+                                subtitle_pos=st.session_state.subtitle_position,
+                                subtitle_scale=st.session_state.subtitle_scale,
                                 enable_char_motion=True,
                                 brightness=st.session_state.editor_brightness,
                                 contrast=st.session_state.editor_contrast,
@@ -2285,7 +2682,11 @@ with tab4:
                             trimmed = [apply_duration(mp, min(clip_dur, float(mp.duration or clip_dur))) for mp in mixed_parts]
                             c_item = apply_audio(c_item, CompositeAudioClip(trimmed))
 
+                        if vo_dur > 0.05:
+                            voice_intervals.append((running_t, running_t + min(clip_dur, vo_dur)))
+
                         clips.append(c_item)
+                        running_t += clip_dur
 
                     final_vid = apply_clip_transition(
                         clips,
@@ -2294,18 +2695,23 @@ with tab4:
                     )
 
                     if st.session_state.bgm_audio_path and os.path.exists(st.session_state.bgm_audio_path) and st.session_state.bgm_volume > 0:
-                        bgm_raw = AudioFileClip(st.session_state.bgm_audio_path)
-                        bgm_clip = bgm_raw
                         total_d = max(float(final_vid.duration or 1.0), 0.5)
-                        if (bgm_raw.duration or 0) < total_d and hasattr(bgm_raw, "loop"):
-                            bgm_scaled = apply_duration(bgm_raw.loop(duration=total_d), total_d)
-                        else:
-                            bgm_scaled = apply_duration(bgm_raw, total_d)
-                        bgm_scaled = scale_audio_volume(bgm_scaled, st.session_state.bgm_volume)
+                        active_duck_vol = (
+                            st.session_state.bgm_duck_volume
+                            if st.session_state.bgm_duck_enabled
+                            else st.session_state.bgm_volume
+                        )
+                        bgm_mixed, bgm_handles = build_ducked_bgm_track(
+                            bgm_path=st.session_state.bgm_audio_path,
+                            total_duration=total_d,
+                            voice_intervals=voice_intervals if st.session_state.bgm_duck_enabled else [],
+                            normal_vol=st.session_state.bgm_volume,
+                            duck_vol=active_duck_vol,
+                        )
                         if final_vid.audio is not None:
-                            final_vid = apply_audio(final_vid, CompositeAudioClip([final_vid.audio, bgm_scaled]))
+                            final_vid = apply_audio(final_vid, CompositeAudioClip([final_vid.audio, bgm_mixed]))
                         else:
-                            final_vid = apply_audio(final_vid, bgm_scaled)
+                            final_vid = apply_audio(final_vid, bgm_mixed)
 
                     final_vid.write_videofile(
                         out_mp4,
@@ -2343,9 +2749,9 @@ with tab4:
                         a.close()
                     except Exception:
                         pass
-                if bgm_clip is not None:
+                for bh in bgm_handles:
                     try:
-                        bgm_clip.close()
+                        bh.close()
                     except Exception:
                         pass
                 if final_vid is not None:
