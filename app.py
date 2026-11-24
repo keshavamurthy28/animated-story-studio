@@ -184,7 +184,11 @@ def translate_lines_to_kannada(gemini_key, lines):
 def build_fallback_scenes_from_rough_story(rough_text, count, char_prompt):
     """Build scene objects deterministically if Gemini API has no quota or fails."""
     clean_story = " ".join(rough_text.strip().split())
-    sentences = [s.strip() for s in clean_story.replace("!", ".").replace("?", ".").split(".") if s.strip()]
+    sentences = [
+        s.strip()
+        for s in clean_story.replace("!", ".").replace("?", ".").split(".")
+        if s.strip()
+    ]
     scenes = []
     for idx in range(count):
         base_line = sentences[idx % len(sentences)] if sentences else clean_story
@@ -448,7 +452,7 @@ def modify_reference_into_scene(ref_pil, target_w, target_h, scene_idx, art_styl
 
 
 def generate_cloudflare_flux_image(cf_account_id, cf_api_token, prompt_text, target_w, target_h, seed=42):
-    """Call Cloudflare Workers AI FLUX.1 [schnell] REST API with explicit width/height and seed."""
+    """Call Cloudflare Workers AI FLUX.1 [schnell] REST API using schema-valid inputs."""
     url = (
         f"https://api.cloudflare.com/client/v4/accounts/{cf_account_id.strip()}"
         "/ai/run/@cf/black-forest-labs/flux-1-schnell"
@@ -457,13 +461,16 @@ def generate_cloudflare_flux_image(cf_account_id, cf_api_token, prompt_text, tar
         "Authorization": f"Bearer {cf_api_token.strip()}",
         "Content-Type": "application/json",
     }
-    w_clean = max(256, min(1024, (target_w // 8) * 8))
-    h_clean = max(256, min(1024, (target_h // 8) * 8))
+    aspect_hint = (
+        "vertical 9:16 portrait composition"
+        if target_h > target_w
+        else "horizontal 16:9 landscape composition"
+    )
+    bounded_prompt = f"{prompt_text.strip()}, {aspect_hint}"[:2048]
     payload = {
-        "prompt": prompt_text,
-        "width": w_clean,
-        "height": h_clean,
-        "seed": seed,
+        "prompt": bounded_prompt,
+        "steps": 4,
+        "seed": int(abs(seed)) % 2147483647,
     }
     resp = requests.post(url, headers=headers, json=payload, timeout=90)
     if not resp.ok:
