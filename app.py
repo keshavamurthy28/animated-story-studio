@@ -19,10 +19,26 @@ from huggingface_hub import InferenceClient
 from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageFont
 
 try:
-    from moviepy.editor import AudioFileClip, ImageClip, VideoFileClip, concatenate_videoclips
+    from moviepy.editor import (
+        AudioFileClip,
+        CompositeAudioClip,
+        CompositeVideoClip,
+        ImageClip,
+        VideoFileClip,
+        concatenate_audioclips,
+        concatenate_videoclips,
+    )
     MOVIEPY_V2 = False
 except ModuleNotFoundError:
-    from moviepy import AudioFileClip, ImageClip, VideoFileClip, concatenate_videoclips
+    from moviepy import (
+        AudioFileClip,
+        CompositeAudioClip,
+        CompositeVideoClip,
+        ImageClip,
+        VideoFileClip,
+        concatenate_audioclips,
+        concatenate_videoclips,
+    )
     MOVIEPY_V2 = True
 
 st.set_page_config(
@@ -32,65 +48,73 @@ st.set_page_config(
 )
 
 DEFAULT_CHAR_PROMPT = (
-    "Single 35-year-old man with short neat dark hair, subtle stubble, wearing a crisp "
-    "charcoal blazer over a light shirt and dark trousers, expressive eyes and body language, "
-    "full upper-body or medium shot inside a modern corporate office"
+    "Expressive main character with clear facial features, natural posture, and consistent outfit "
+    "matching the user's story command and environment"
 )
 
-DEFAULT_CORPORATE_SCENES = [
+DEFAULT_SCENES = [
     {
-        "narration": "At thirty-five, every deadline in the corporate office feels heavier than the last, pulling him deep into quiet pressure.",
-        "kannada_narration": "ಮೂವತ್ತೈದರ ವಯಸ್ಸಿನಲ್ಲಿ, ಕಚೇರಿಯ ಪ್ರತಿಯೊಂದು ಗಡುವು ಮೊದಲಿಗಿಂತ ಹೆಚ್ಚು ಭಾರವಾಗಿ ಭಾಸವಾಗುತ್ತದೆ, ಆಳವಾದ ಒತ್ತಡಕ್ಕೆ ದೂಡುತ್ತದೆ.",
-        "emotion": "Heavy Pressure & Quiet Strain",
+        "narration": "The journey begins as the setting comes alive with every detail you commanded.",
+        "kannada_narration": "ನೀವು ಬಯಸಿದ ಪ್ರತಿಯೊಂದು ವಿವರದೊಂದಿಗೆ ದೃಶ್ಯ ಜೀವಂತವಾಗುತ್ತಾ ಪ್ರಯಾಣ ಆರಂಭವಾಗುತ್ತದೆ.",
+        "emotion": "Focused & Present",
         "visual": (
-            "Medium shot at a corporate desk with dual monitors and spreadsheets; 35-year-old man "
-            "rubbing his temples with furrowed brow and tense shoulders under cool office lights"
+            "Medium cinematic shot matching the exact environment and action requested; "
+            "main character reacting naturally with clear expression and lighting"
         ),
     },
     {
-        "narration": "A sudden shift in the meeting room leaves him caught between sharp expectation and silent disbelief.",
-        "kannada_narration": "ಸಭಾಂಗಣದಲ್ಲಿನ ಹಠಾತ್ ಬದಲಾವಣೆ ಅವನನ್ನು ನಿರೀಕ್ಷೆ ಮತ್ತು ಮೌನ ಅಚ್ಚರಿಯ ನಡುವೆ ಸಿಲುಕಿಸುತ್ತದೆ.",
-        "emotion": "Shock & Silent Disbelief",
+        "narration": "A sudden turn shifts the mood and tests how the character responds in the moment.",
+        "kannada_narration": "ಹಠಾತ್ ತಿರುವು ವಾತಾವರಣವನ್ನು ಬದಲಾಯಿಸುತ್ತದೆ ಮತ್ತು ಆ ಕ್ಷಣದ ಪ್ರತಿಕ್ರಿಯೆಯನ್ನು ಪರೀಕ್ಷಿಸುತ್ತದೆ.",
+        "emotion": "Alert & Determined",
         "visual": (
-            "Wide-medium shot inside a glass-walled corporate conference room with a long table and notes; "
-            "35-year-old man frozen mid-thought with wide eyes and jaw tightened"
+            "Dynamic medium-wide shot in the requested environment; main character showing "
+            "expressive posture, movement, and atmospheric lighting"
         ),
     },
     {
-        "narration": "Standing beside the tall office window as city lights flicker, waves of frustration and vulnerability wash over him.",
-        "kannada_narration": "ಕಚೇರಿಯ ಎತ್ತರದ ಕಿಟಕಿಯ ಬಳಿ ನಿಂತಾಗ, ಹತಾಶೆ ಮತ್ತು ಭಾವುಕತೆಯ ಅಲೆಗಳು ಅವನನ್ನು ಆವರಿಸುತ್ತವೆ.",
-        "emotion": "Frustration & Vulnerability",
+        "narration": "Through changing surroundings and emotion, the story builds toward a clear turning point.",
+        "kannada_narration": "ಬದಲಾಗುವ ಪರಿಸರ ಮತ್ತು ಭಾವನೆಗಳ ಮೂಲಕ ಕಥೆಯು ಸ್ಪಷ್ಟ ತಿರುವಿನತ್ತ ಸಾಗುತ್ತದೆ.",
+        "emotion": "Reflective & Resilient",
         "visual": (
-            "Medium-wide shot near floor-to-ceiling office windows overlooking twilight city towers; "
-            "35-year-old man leaning slightly against the frame with a tired sigh and downcast gaze"
+            "Expressive framing showing the main character and surrounding environment "
+            "with rich depth, natural motion, and mood lighting"
         ),
     },
     {
-        "narration": "Taking a slow breath back at his workstation, he gathers resolve and steadies his focus for what comes next.",
-        "kannada_narration": "ತನ್ನ ಡೆಸ್ಕ್ ಬಳಿ ನಿಧಾನವಾಗಿ ಉಸಿರು ಎಳೆದುಕೊಂಡು, ಮುಂದಿನ ಸವಾಲಿಗೆ ಧೈರ್ಯ ಮತ್ತು ಗಮನವನ್ನು ಒಗ್ಗೂಡಿಸುತ್ತಾನೆ.",
-        "emotion": "Inner Resolve & Composure",
+        "narration": "With steady resolve, the scene settles into a memorable closing moment.",
+        "kannada_narration": "ಸ್ಥಿರ ನಿರ್ಧಾರದೊಂದಿಗೆ ದೃಶ್ಯವು ಒಂದು ಸ್ಮರಣೀಯ ಅಂತ್ಯದತ್ತ ಸಾಗುತ್ತದೆ.",
+        "emotion": "Composed & Hopeful",
         "visual": (
-            "Medium shot at a clean corporate workstation with a notebook and coffee mug; "
-            "35-year-old man sitting upright with a calm, determined expression and focused eyes"
+            "Balanced cinematic shot of the main character in the commanded setting "
+            "with clear composition and clean lighting"
         ),
     },
 ]
 
 for key, default in [
-    ("scenes", [dict(s) for s in DEFAULT_CORPORATE_SCENES]),
+    ("scenes", [dict(s) for s in DEFAULT_SCENES]),
     ("images", []),
     ("scene_videos", []),
+    ("uploaded_video_clips", []),
+    ("uploaded_audio_clips", []),
+    ("timeline_order", []),
     ("tab2_baked_subtitles", False),
     ("audio_files", []),
     ("custom_audio_paths", []),
     ("own_voice_table", {}),
     ("locked_character_prompt", DEFAULT_CHAR_PROMPT),
     ("exact_character_count", 1),
-    ("lock_character_enabled", True),
+    ("lock_character_enabled", False),
     ("kannada_subtitles", {}),
     ("populated_script_lines", []),
     ("populated_script_lang", "English"),
     ("gen_batch_id", 0),
+    ("editor_brightness", 1.0),
+    ("editor_contrast", 1.0),
+    ("editor_saturation", 1.0),
+    ("editor_blur", 0.0),
+    ("editor_transition", "Crossfade"),
+    ("editor_transition_sec", 0.5),
 ]:
     if key not in st.session_state:
         st.session_state[key] = default
@@ -99,7 +123,7 @@ for idx, sc in enumerate(st.session_state.scenes):
     st.session_state.setdefault(f"nar_{idx}", sc.get("narration", ""))
     st.session_state.setdefault(f"kn_script_{idx}", sc.get("kannada_narration", ""))
     st.session_state.setdefault(f"vis_{idx}", sc.get("visual", ""))
-    st.session_state.setdefault(f"emo_{idx}", sc.get("emotion", "Dense Emotion"))
+    st.session_state.setdefault(f"emo_{idx}", sc.get("emotion", "Expressive"))
 
 
 def run_async(coro):
@@ -123,8 +147,16 @@ def apply_duration(clip, duration):
     return clip.with_duration(duration) if MOVIEPY_V2 else clip.set_duration(duration)
 
 
+def apply_start(clip, start_t):
+    return clip.with_start(start_t) if MOVIEPY_V2 else clip.set_start(start_t)
+
+
 def apply_audio(clip, audio):
     return clip.with_audio(audio) if MOVIEPY_V2 else clip.set_audio(audio)
+
+
+def apply_position(clip, pos_fn):
+    return clip.with_position(pos_fn) if MOVIEPY_V2 else clip.set_position(pos_fn)
 
 
 def ensure_exact_size(pil_img, target_w, target_h):
@@ -142,6 +174,26 @@ def ensure_exact_size(pil_img, target_w, target_h):
     return resized.crop((left, top, left + target_w, top + target_h)).resize(
         (target_w, target_h), resampling
     )
+
+
+def apply_pil_effects(
+    pil_img,
+    brightness=1.0,
+    contrast=1.0,
+    saturation=1.0,
+    blur_radius=0.0,
+):
+    """Apply live studio color and filter adjustments to a PIL frame."""
+    out = pil_img.convert("RGB")
+    if abs(brightness - 1.0) > 1e-3:
+        out = ImageEnhance.Brightness(out).enhance(brightness)
+    if abs(contrast - 1.0) > 1e-3:
+        out = ImageEnhance.Contrast(out).enhance(contrast)
+    if abs(saturation - 1.0) > 1e-3:
+        out = ImageEnhance.Color(out).enhance(saturation)
+    if blur_radius and blur_radius > 0.05:
+        out = out.filter(ImageFilter.GaussianBlur(radius=float(blur_radius)))
+    return out
 
 
 def _is_valid_font_file(path):
@@ -233,38 +285,40 @@ def translate_lines_to_kannada(gemini_key, lines):
 
 
 def build_fallback_scenes_from_rough_story(rough_text, count, char_prompt):
-    """Build up to 10 distinct emotional corporate scenes when Gemini is unavailable or has no quota."""
+    """Build up to 10 scenes directly from the user's rough story, character, and setting commands."""
     target_count = max(1, min(10, int(count)))
-    clean_story = " ".join(rough_text.strip().split())
+    clean_story = " ".join((rough_text or "").strip().split())
+    clean_char = " ".join((char_prompt or "").strip().split())
     sentences = [
         s.strip()
         for s in clean_story.replace("!", ".").replace("?", ".").split(".")
         if s.strip()
     ]
-    emotions_and_settings = [
-        ("Overwhelmed & Tense", "at a glowing computer desk surrounded by spreadsheets inside a corporate office"),
-        ("Shocked & Guarded", "inside a glass-walled corporate meeting room with a conference table and presentation screen"),
-        ("Sorrowful & Drained", "standing beside tall corporate office windows overlooking city buildings at dusk"),
-        ("Angry & Restrained", "by a modern office cubicle partition holding files with tight posture"),
-        ("Anxious & Restless", "pacing near the office printer and coffee station under bright fluorescent lights"),
-        ("Vulnerable & Quiet", "sitting alone in a corner lounge area of the corporate office looking down"),
-        ("Defiant & Focused", "reviewing urgent contracts at his desk with a sharp, steady gaze"),
-        ("Exhausted & Reflective", "leaning back in his office chair during late evening hours with soft desk lamp light"),
-        ("Hopeful & Renewed", "standing near bright morning windows inside the corporate workspace"),
-        ("Resolute & Composed", "seated upright at his corporate workstation with a notebook and coffee cup, ready for action"),
+    beat_moods = [
+        ("Opening & Atmosphere", "establishing the requested environment and mood"),
+        ("Action & Engagement", "character actively interacting with the surroundings"),
+        ("Turning Point & Tension", "shift in mood, lighting, or situation"),
+        ("Movement & Exploration", "dynamic motion through the scene setting"),
+        ("Emotional Reaction", "expressive response to unfolding events"),
+        ("Closer Look & Detail", "focused moment highlighting key action and environment"),
+        ("Rising Momentum", "growing energy and purposeful movement"),
+        ("Reflection & Depth", "quieter, atmospheric moment in the scene"),
+        ("Breakthrough", "clear shift toward resolution or discovery"),
+        ("Closing Frame", "memorable concluding shot matching the story direction"),
     ]
     scenes = []
+    subject_prefix = f"{clean_char}; " if clean_char else ""
     for idx in range(target_count):
-        base_line = sentences[idx % len(sentences)] if sentences else clean_story
-        emo_label, setting_desc = emotions_and_settings[idx % len(emotions_and_settings)]
+        base_line = sentences[idx % len(sentences)] if sentences else (clean_story or "Custom scene")
+        emo_label, beat_desc = beat_moods[idx % len(beat_moods)]
         scenes.append({
-            "narration": f"Scene {idx + 1}: {base_line}.",
+            "narration": f"{base_line}.",
             "kannada_narration": "",
             "emotion": emo_label,
             "visual": (
-                f"Medium shot {setting_desc}; {char_prompt}, showing {emo_label.lower()} "
-                f"facial reaction and body posture tied to: {base_line}"
-            ),
+                f"Cinematic shot ({beat_desc}) for: {base_line}. "
+                f"{subject_prefix}Follow all user commands for character, background, nature, or location accurately."
+            ).strip(),
         })
     return scenes
 
@@ -275,7 +329,7 @@ def sync_scenes_to_count(existing_scenes, desired_count, rough_text, char_prompt
     base_story = (
         rough_text.strip()
         if rough_text and rough_text.strip()
-        else "A 35-year-old man in a corporate office experiences dense emotions and tense reactions"
+        else "Custom story following user instructions for characters and environment"
     )
     extra_pool = build_fallback_scenes_from_rough_story(base_story, target_n, char_prompt)
 
@@ -373,8 +427,12 @@ def build_motion_clip(
     subtitle_text="",
     subtitle_lang="None",
     enable_char_motion=True,
+    brightness=1.0,
+    contrast=1.0,
+    saturation=1.0,
+    blur_radius=0.0,
 ):
-    """Create animated scene frames with exact target_w x target_h dimensions."""
+    """Create animated scene frames with exact target_w x target_h dimensions and studio FX."""
     resampling = getattr(Image, "Resampling", Image).LANCZOS
     modes = ["Zoom In", "Pan Right", "Zoom Out", "Pan Left"]
     active_mode = modes[scene_idx % len(modes)] if motion_mode == "Auto Alternate" else motion_mode
@@ -433,6 +491,14 @@ def build_motion_clip(
         if frame_pil.size != (target_w, target_h):
             frame_pil = frame_pil.resize((target_w, target_h), resampling)
 
+        frame_pil = apply_pil_effects(
+            frame_pil,
+            brightness=brightness,
+            contrast=contrast,
+            saturation=saturation,
+            blur_radius=blur_radius,
+        )
+
         if subtitle_lang != "None" and subtitle_text:
             frame_pil = draw_subtitle_on_frame(
                 frame_pil,
@@ -461,6 +527,10 @@ def render_single_scene_video(
     subtitle_text="",
     subtitle_lang="None",
     enable_char_motion=True,
+    brightness=1.0,
+    contrast=1.0,
+    saturation=1.0,
+    blur_radius=0.0,
 ):
     """Render and save a standalone MP4 video clip for a single scene."""
     clip = build_motion_clip(
@@ -473,6 +543,10 @@ def render_single_scene_video(
         subtitle_text=subtitle_text,
         subtitle_lang=subtitle_lang,
         enable_char_motion=enable_char_motion,
+        brightness=brightness,
+        contrast=contrast,
+        saturation=saturation,
+        blur_radius=blur_radius,
     )
     try:
         clip.write_videofile(
@@ -491,19 +565,37 @@ def render_single_scene_video(
 
 
 def build_local_bypass_scene(prompt_text, target_w, target_h, scene_idx, emotion_label=""):
-    """Distinct corporate scene storyboard frame when external AI image APIs fail/quota-out."""
-    palettes = [
-        ((32, 46, 72), (56, 76, 108), (20, 26, 38)),
-        ((46, 38, 68), (82, 66, 106), (24, 20, 34)),
-        ((28, 44, 62), (118, 86, 68), (18, 24, 34)),
-        ((58, 34, 42), (96, 54, 62), (24, 18, 24)),
-        ((34, 48, 64), (72, 92, 114), (20, 28, 36)),
-        ((28, 56, 68), (64, 104, 112), (18, 32, 38)),
-        ((52, 40, 34), (94, 72, 58), (22, 18, 16)),
-        ((26, 38, 58), (52, 74, 102), (16, 22, 32)),
-        ((36, 56, 52), (68, 102, 92), (18, 30, 28)),
-        ((42, 46, 76), (78, 84, 126), (20, 22, 38)),
-    ]
+    """Command-driven storyboard frame when external AI image APIs fail/quota-out."""
+    p_low = (prompt_text or "").lower()
+    if any(k in p_low for k in ["forest", "jungle", "tree", "woods", "nature", "mountain", "valley", "river"]):
+        palettes = [
+            ((24, 58, 44), (54, 108, 72), (16, 34, 24)),
+            ((30, 68, 56), (72, 126, 98), (18, 38, 30)),
+            ((38, 56, 42), (124, 104, 68), (22, 30, 20)),
+            ((20, 48, 62), (56, 112, 104), (14, 28, 36)),
+        ]
+    elif any(k in p_low for k in ["sunset", "sunrise", "golden", "dusk", "dawn", "beach", "ocean", "sea"]):
+        palettes = [
+            ((54, 34, 68), (168, 92, 66), (26, 20, 36)),
+            ((42, 62, 96), (212, 134, 78), (22, 32, 48)),
+            ((32, 48, 78), (148, 86, 92), (18, 24, 38)),
+            ((64, 46, 74), (192, 118, 72), (24, 20, 32)),
+        ]
+    elif any(k in p_low for k in ["night", "space", "stars", "moon", "cyber", "neon"]):
+        palettes = [
+            ((12, 18, 36), (34, 48, 86), (8, 12, 24)),
+            ((22, 14, 42), (68, 36, 102), (12, 8, 24)),
+            ((10, 28, 38), (28, 82, 98), (8, 18, 24)),
+            ((28, 16, 36), (92, 34, 78), (14, 10, 22)),
+        ]
+    else:
+        palettes = [
+            ((32, 46, 72), (56, 76, 108), (20, 26, 38)),
+            ((46, 38, 68), (82, 66, 106), (24, 20, 34)),
+            ((28, 44, 62), (118, 86, 68), (18, 24, 34)),
+            ((36, 56, 52), (68, 102, 92), (18, 30, 28)),
+        ]
+
     top_col, mid_col, bot_col = palettes[scene_idx % len(palettes)]
 
     y_grid = np.linspace(0.0, 1.0, target_h, dtype=np.float32)[:, None, None]
@@ -517,50 +609,30 @@ def build_local_bypass_scene(prompt_text, target_w, target_h, scene_idx, emotion
     sky_wall = c_top * (1.0 - blend_upper) + c_mid * blend_upper
     full_bg = sky_wall * (1.0 - blend_lower) + c_bot * blend_lower
 
-    lamp_cx = target_w * (0.22 + 0.14 * (scene_idx % 5))
+    lamp_cx = target_w * (0.25 + 0.12 * (scene_idx % 5))
     lamp_cy = target_h * (0.22 + 0.04 * (scene_idx % 3))
     dist_sq = (x_grid[:, :, 0] - lamp_cx) ** 2 + (y_grid[:, :, 0] - lamp_cy) ** 2
-    lamp_r = min(target_w, target_h) * 0.18
+    lamp_r = min(target_w, target_h) * 0.20
     glow = np.exp(-dist_sq / (2.0 * lamp_r ** 2))[:, :, None]
-    full_bg = np.clip(full_bg + glow * np.array([52.0, 46.0, 38.0], dtype=np.float32), 0, 255)
+    full_bg = np.clip(full_bg + glow * np.array([56.0, 48.0, 38.0], dtype=np.float32), 0, 255)
 
     img = Image.fromarray(full_bg.astype(np.uint8), mode="RGB").convert("RGBA")
     overlay = Image.new("RGBA", (target_w, target_h), (0, 0, 0, 0))
     draw = ImageDraw.Draw(overlay)
 
-    floor_y = int(target_h * 0.64)
-    variant = scene_idx % 4
-    if variant == 0:
-        draw.rectangle([int(target_w * 0.08), floor_y, int(target_w * 0.92), int(target_h * 0.72)], fill=(22, 28, 38, 220))
-        for mx in [0.16, 0.66]:
-            draw.rounded_rectangle(
-                [int(target_w * mx), int(target_h * 0.44), int(target_w * (mx + 0.18)), int(target_h * 0.58)],
-                radius=8,
-                fill=(45, 78, 112, 200),
-                outline=(120, 175, 220, 180),
-                width=2,
-            )
-    elif variant == 1:
-        for gx in [0.12, 0.36, 0.64, 0.88]:
-            draw.line([(int(target_w * gx), int(target_h * 0.14)), (int(target_w * gx), floor_y)], fill=(150, 180, 210, 110), width=3)
-        draw.polygon(
-            [(int(target_w * 0.12), floor_y + 15), (int(target_w * 0.88), floor_y + 15), (target_w, int(target_h * 0.76)), (0, int(target_h * 0.76))],
-            fill=(30, 36, 48, 215),
+    floor_y = int(target_h * 0.65)
+    for idx_b in range(6):
+        bx0 = int(target_w * (idx_b * 0.18))
+        bx1 = bx0 + int(target_w * 0.15)
+        bh = int(target_h * (0.26 + 0.12 * ((idx_b + scene_idx) % 3)))
+        draw.rectangle(
+            [bx0, floor_y - bh, bx1, floor_y],
+            fill=(18, 24, 34, 130),
         )
-    elif variant == 2:
-        wx0, wy0, wx1, wy1 = int(target_w * 0.54), int(target_h * 0.16), int(target_w * 0.92), floor_y
-        draw.rectangle([wx0, wy0, wx1, wy1], fill=(24, 34, 48, 185), outline=(140, 165, 195, 160), width=2)
-        for bx in range(1, 4):
-            px = wx0 + int((wx1 - wx0) * bx / 4)
-            draw.line([(px, wy0), (px, wy1)], fill=(120, 145, 175, 120), width=2)
-    else:
-        for px in [0.25, 0.75]:
-            draw.line([(int(target_w * px), 0), (int(target_w * px), int(target_h * 0.12))], fill=(180, 190, 205, 140), width=2)
-            draw.ellipse([int(target_w * px) - 24, int(target_h * 0.12) - 6, int(target_w * px) + 24, int(target_h * 0.12) + 8], fill=(255, 225, 165, 190))
 
-    cx = int(target_w * (0.44 + 0.08 * math.sin(scene_idx * 1.7)))
+    cx = int(target_w * (0.45 + 0.08 * math.sin(scene_idx * 1.7)))
     head_r = max(28, int(min(target_w, target_h) * 0.055))
-    slump_y = int(round(math.sin(scene_idx * 1.3) * 12))
+    slump_y = int(round(math.sin(scene_idx * 1.3) * 10))
     head_cy = int(target_h * 0.43) + slump_y
 
     sh_w = int(head_r * 2.5)
@@ -569,34 +641,17 @@ def build_local_bypass_scene(prompt_text, target_w, target_h, scene_idx, emotion
         [cx - sh_w, head_cy + head_r + 6, cx + sh_w, head_cy + head_r + 6 + sh_h],
         radius=26,
         fill=(34, 40, 52, 235),
-        outline=(95, 112, 138, 160),
+        outline=(115, 135, 165, 170),
         width=2,
     )
-    draw.polygon(
-        [(cx - 18, head_cy + head_r + 8), (cx + 18, head_cy + head_r + 8), (cx, head_cy + head_r + 56)],
-        fill=(220, 228, 238, 220),
-    )
-
     draw.ellipse([cx - head_r, head_cy - head_r, cx + head_r, head_cy + head_r], fill=(206, 162, 132, 245))
     draw.pieslice([cx - head_r, head_cy - head_r - 4, cx + head_r, head_cy + head_r - 8], 185, 355, fill=(38, 32, 28, 255))
 
     eye_y = head_cy - 2
     eye_dx = max(10, int(head_r * 0.36))
-    emo_txt = (emotion_label or "").lower()
-    if any(k in emo_txt for k in ["shock", "disbelief", "surpris"]):
-        draw.ellipse([cx - eye_dx - 6, eye_y - 6, cx - eye_dx + 6, eye_y + 6], fill=(250, 250, 250, 255))
-        draw.ellipse([cx + eye_dx - 6, eye_y - 6, cx + eye_dx + 6, eye_y + 6], fill=(250, 250, 250, 255))
-        draw.ellipse([cx - eye_dx - 3, eye_y - 3, cx - eye_dx + 3, eye_y + 3], fill=(25, 25, 30, 255))
-        draw.ellipse([cx + eye_dx - 3, eye_y - 3, cx + eye_dx + 3, eye_y + 3], fill=(25, 25, 30, 255))
-        draw.ellipse([cx - 8, head_cy + 14, cx + 8, head_cy + 26], outline=(110, 58, 52, 255), width=2)
-    elif any(k in emo_txt for k in ["sorrow", "sad", "drain", "vulnerab", "heavy"]):
-        draw.line([(cx - eye_dx - 7, eye_y - 6), (cx - eye_dx + 6, eye_y + 1)], fill=(45, 36, 32, 255), width=2)
-        draw.line([(cx + eye_dx - 6, eye_y + 1), (cx + eye_dx + 7, eye_y - 6)], fill=(45, 36, 32, 255), width=2)
-        draw.arc([cx - 12, head_cy + 16, cx + 12, head_cy + 28], 190, 350, fill=(105, 56, 52, 255), width=2)
-    else:
-        draw.line([(cx - eye_dx - 7, eye_y + 2), (cx - eye_dx + 6, eye_y - 5)], fill=(45, 36, 32, 255), width=2)
-        draw.line([(cx + eye_dx - 6, eye_y - 5), (cx + eye_dx + 7, eye_y + 2)], fill=(45, 36, 32, 255), width=2)
-        draw.line([(cx - 10, head_cy + 18), (cx + 10, head_cy + 18)], fill=(105, 56, 52, 255), width=2)
+    draw.ellipse([cx - eye_dx - 4, eye_y - 4, cx - eye_dx + 4, eye_y + 4], fill=(25, 25, 30, 255))
+    draw.ellipse([cx + eye_dx - 4, eye_y - 4, cx + eye_dx + 4, eye_y + 4], fill=(25, 25, 30, 255))
+    draw.line([(cx - 9, head_cy + 16), (cx + 9, head_cy + 16)], fill=(105, 56, 52, 255), width=2)
 
     card_w = int(target_w * 0.88)
     card_h = int(target_h * 0.19)
@@ -838,9 +893,51 @@ def generate_real_ai_scene(
     return None, None, errors
 
 
+def apply_clip_transition(clips, transition_name="Crossfade", trans_sec=0.5):
+    """Apply smooth transitions across a list of MoviePy video clips."""
+    if not clips:
+        return None
+    if len(clips) == 1 or transition_name == "None" or trans_sec <= 0.05:
+        return concatenate_videoclips(clips, method="compose")
+
+    positioned = []
+    cur_start = 0.0
+    for idx, clp in enumerate(clips):
+        dur = max(float(clp.duration or 1.0), 0.2)
+        t_dur = min(float(trans_sec), dur * 0.4)
+        start_t = max(0.0, cur_start - (t_dur if idx > 0 else 0.0))
+
+        c_mod = clp
+        if transition_name == "Fade":
+            if hasattr(c_mod, "crossfadein") and idx > 0:
+                c_mod = c_mod.crossfadein(t_dur)
+            elif hasattr(c_mod, "fadein") and idx > 0:
+                c_mod = c_mod.fadein(t_dur)
+        elif transition_name == "Crossfade":
+            if hasattr(c_mod, "crossfadein") and idx > 0:
+                c_mod = c_mod.crossfadein(t_dur)
+        elif transition_name == "Slide Left" and idx > 0:
+            w_c = getattr(c_mod, "w", 720)
+            c_mod = apply_position(
+                c_mod,
+                lambda t, wc=w_c, td=t_dur: (int(round(wc * max(0.0, 1.0 - t / max(0.05, td)))), 0) if t < td else (0, 0),
+            )
+        elif transition_name == "Slide Right" and idx > 0:
+            w_c = getattr(c_mod, "w", 720)
+            c_mod = apply_position(
+                c_mod,
+                lambda t, wc=w_c, td=t_dur: (-int(round(wc * max(0.0, 1.0 - t / max(0.05, td)))), 0) if t < td else (0, 0),
+            )
+
+        positioned.append(apply_start(c_mod, start_t))
+        cur_start = start_t + dur
+
+    return CompositeVideoClip(positioned)
+
+
 st.title("🎬 AI Animated Story Studio")
 st.caption(
-    "Up to 10 scenes, multi-engine AI scene failover, local bypass fallback, locked character identity, interactive English & Kannada story editor, per-scene video creation with subtitles, voiceovers, and exact-size MP4 export."
+    "Command any character, setting, or nature scene directly; edit in a live top Studio Video Editor with uploaded videos/audios, effects, transitions, subtitles, and MP4 export."
 )
 
 with st.sidebar:
@@ -864,23 +961,169 @@ with st.sidebar:
         width, height, ratio_str = 1280, 720, "16:9"
 
     st.divider()
-    st.subheader("🔒 Locked Character & Cast Identity")
+    st.subheader("🎛️ Character & Command Lock")
     st.session_state.lock_character_enabled = st.checkbox(
-        "Lock character count, faces & outfits across scenes",
+        "Enforce character & setting instructions across scenes",
         value=st.session_state.lock_character_enabled,
     )
     st.session_state.exact_character_count = st.number_input(
-        "Exact Main Character Count",
+        "Character / Subject Count",
         min_value=1,
         max_value=8,
         value=int(st.session_state.exact_character_count),
         step=1,
     )
     st.session_state.locked_character_prompt = st.text_area(
-        "Locked Character & Face Prompt",
+        "Character / Environment Command Prompt",
         value=st.session_state.locked_character_prompt,
         height=110,
     )
+
+# --- TOP STUDIO VIDEO EDITOR SCREEN (LIVE DRAFT PREVIEW, UPLOADED MEDIA, FX & TRANSITIONS) ---
+with st.expander("🎚️ Top Studio Video Editor — Live Draft, Uploaded Videos & Audios, Effects & Transitions", expanded=True):
+    ed_left, ed_right = st.columns([1.45, 1.55])
+
+    with ed_left:
+        st.markdown("**🎥 Live Draft Preview**")
+        available_source_imgs = [p for p in st.session_state.images if os.path.exists(p)]
+        available_source_vids = [p for p in st.session_state.scene_videos if os.path.exists(p)] + [
+            p for p in st.session_state.uploaded_video_clips if os.path.exists(p)
+        ]
+
+        preview_choice_mode = st.radio(
+            "Draft Preview Source",
+            ["Live FX Image Draft", "Rendered Video Clip"],
+            horizontal=True,
+            key="top_draft_preview_mode",
+        )
+
+        if preview_choice_mode == "Live FX Image Draft" and available_source_imgs:
+            sel_img_idx = st.selectbox(
+                "Select Scene Frame for Live FX Preview",
+                list(range(len(available_source_imgs))),
+                format_func=lambda k: f"Scene {k + 1} ({os.path.basename(available_source_imgs[k])})",
+                key="top_fx_scene_idx",
+            )
+            with Image.open(available_source_imgs[sel_img_idx]) as raw_im:
+                draft_pil = ensure_exact_size(raw_im, width, height)
+            draft_pil = apply_pil_effects(
+                draft_pil,
+                brightness=st.session_state.editor_brightness,
+                contrast=st.session_state.editor_contrast,
+                saturation=st.session_state.editor_saturation,
+                blur_radius=st.session_state.editor_blur,
+            )
+            st.image(
+                draft_pil,
+                caption=f"Live Draft ({width}x{height}) • Trans: {st.session_state.editor_transition}",
+                use_container_width=True,
+            )
+        elif available_source_vids:
+            sel_vid_idx = st.selectbox(
+                "Select Video Clip to Inspect",
+                list(range(len(available_source_vids))),
+                format_func=lambda k: f"Clip {k + 1}: {os.path.basename(available_source_vids[k])}",
+                key="top_vid_preview_idx",
+            )
+            st.video(available_source_vids[sel_vid_idx])
+        else:
+            bypass_preview = build_local_bypass_scene(
+                st.session_state.locked_character_prompt,
+                width,
+                height,
+                0,
+                emotion_label="Live Draft",
+            )
+            bypass_preview = apply_pil_effects(
+                bypass_preview,
+                brightness=st.session_state.editor_brightness,
+                contrast=st.session_state.editor_contrast,
+                saturation=st.session_state.editor_saturation,
+                blur_radius=st.session_state.editor_blur,
+            )
+            st.image(
+                bypass_preview,
+                caption="Live Draft Canvas — Generate scenes or upload videos/audios to edit",
+                use_container_width=True,
+            )
+
+    with ed_right:
+        st.markdown("**✂️ Effects, Transitions & Free Media Upload**")
+        fx_c1, fx_c2 = st.columns(2)
+        with fx_c1:
+            st.session_state.editor_brightness = st.slider(
+                "Brightness", 0.5, 1.6, float(st.session_state.editor_brightness), 0.05
+            )
+            st.session_state.editor_contrast = st.slider(
+                "Contrast", 0.5, 1.8, float(st.session_state.editor_contrast), 0.05
+            )
+        with fx_c2:
+            st.session_state.editor_saturation = st.slider(
+                "Saturation / Color", 0.0, 2.0, float(st.session_state.editor_saturation), 0.05
+            )
+            st.session_state.editor_blur = st.slider(
+                "Soft Focus / Blur", 0.0, 6.0, float(st.session_state.editor_blur), 0.25
+            )
+
+        tr_c1, tr_c2 = st.columns(2)
+        with tr_c1:
+            st.session_state.editor_transition = st.selectbox(
+                "Clip Transition",
+                ["None", "Crossfade", "Fade", "Slide Left", "Slide Right"],
+                index=["None", "Crossfade", "Fade", "Slide Left", "Slide Right"].index(
+                    st.session_state.editor_transition
+                ),
+            )
+        with tr_c2:
+            st.session_state.editor_transition_sec = st.slider(
+                "Transition Duration (sec)", 0.1, 1.5, float(st.session_state.editor_transition_sec), 0.1
+            )
+
+        st.divider()
+        up_media_v, up_media_a = st.columns(2)
+        with up_media_v:
+            extra_videos = st.file_uploader(
+                "Upload Video Clips (.mp4, .mov, .webm)",
+                type=["mp4", "mov", "webm", "mkv"],
+                accept_multiple_files=True,
+                key="top_editor_upload_videos",
+            )
+            if st.button("➕ Add Uploaded Videos to Studio"):
+                if extra_videos:
+                    os.makedirs("uploaded_studio_media", exist_ok=True)
+                    added_v = []
+                    for idx_u, uf in enumerate(extra_videos):
+                        ext = os.path.splitext(uf.name)[1].lower() or ".mp4"
+                        vp = os.path.join("uploaded_studio_media", f"clip_{int(time.time())}_{idx_u}{ext}")
+                        with open(vp, "wb") as f:
+                            f.write(uf.getbuffer())
+                        added_v.append(vp)
+                    st.session_state.uploaded_video_clips.extend(added_v)
+                    st.session_state.scene_videos.extend(added_v)
+                    st.success(f"Added {len(added_v)} video clip(s) to your studio timeline.")
+                    st.rerun()
+
+        with up_media_a:
+            extra_audios = st.file_uploader(
+                "Upload Audio / Voice / BGM (.mp3, .wav, .m4a, .ogg)",
+                type=["mp3", "wav", "m4a", "ogg"],
+                accept_multiple_files=True,
+                key="top_editor_upload_audios",
+            )
+            if st.button("🎵 Add Uploaded Audio Tracks"):
+                if extra_audios:
+                    os.makedirs("uploaded_studio_media", exist_ok=True)
+                    added_a = []
+                    for idx_a, af in enumerate(extra_audios):
+                        ext = os.path.splitext(af.name)[1].lower() or ".mp3"
+                        ap = os.path.join("uploaded_studio_media", f"audio_{int(time.time())}_{idx_a}{ext}")
+                        with open(ap, "wb") as f:
+                            f.write(af.getbuffer())
+                        added_a.append(ap)
+                    st.session_state.uploaded_audio_clips.extend(added_a)
+                    st.session_state.audio_files.extend(added_a)
+                    st.success(f"Added {len(added_a)} audio track(s) to your studio.")
+                    st.rerun()
 
 tab1, tab2, tab3, tab4 = st.tabs([
     "1️⃣ Rough Story & Editor",
@@ -891,17 +1134,17 @@ tab1, tab2, tab3, tab4 = st.tabs([
 
 # --- TAB 1: SCRIPT WRITER & INTERACTIVE EDITING AREA (ENGLISH + KANNADA) ---
 with tab1:
-    st.subheader("Write Your Rough Idea & Edit English / Kannada Script")
+    st.subheader("Write Your Rough Idea & Command Any Character or Environment")
     rough_story = st.text_area(
-        "Type your rough story in any style (even broken sentences):",
-        value="A 35-year-old man in a corporate office experiences dense emotions and tense reactions through high-stakes work situations, sudden setbacks, and quiet inner resolve.",
+        "Type your rough story, setting, nature/background, or commands:",
+        value="Follow the character through any setting, nature, or situation described in my command with clear emotion and action.",
         height=110,
     )
     num_scenes = st.slider("Number of Scenes", 2, 10, max(2, min(10, len(st.session_state.scenes) or 6)))
 
     if st.button("✨ Polish Story & Create Scenes", type="primary"):
         if not rough_story.strip():
-            st.error("Please write a rough story first.")
+            st.error("Please write a rough story or command first.")
         elif not api_key or not api_key.strip():
             st.session_state.scenes = build_fallback_scenes_from_rough_story(
                 rough_story, num_scenes, st.session_state.locked_character_prompt
@@ -910,8 +1153,8 @@ with tab1:
                 st.session_state[f"nar_{idx}"] = sc["narration"]
                 st.session_state[f"kn_script_{idx}"] = sc["kannada_narration"]
                 st.session_state[f"vis_{idx}"] = sc["visual"]
-                st.session_state[f"emo_{idx}"] = sc.get("emotion", "Dense Emotion")
-            st.warning(f"No Gemini API Key provided—created {len(st.session_state.scenes)} distinct emotional corporate scenes directly from your rough story.")
+                st.session_state[f"emo_{idx}"] = sc.get("emotion", "Expressive")
+            st.warning(f"No Gemini API Key provided—created {len(st.session_state.scenes)} scenes directly from your command.")
         else:
             fallback_models = [
                 "gemini-3.8-flash",
@@ -920,25 +1163,25 @@ with tab1:
                 "gemini-3.1-flash-lite",
             ]
             char_context = (
-                f"\nStrict cast lock: Keep exact character count ({st.session_state.exact_character_count} main character(s)) and consistent identity/outfit across every scene: {st.session_state.locked_character_prompt}"
+                f"\nUser character/environment instruction ({st.session_state.exact_character_count} main character(s)): {st.session_state.locked_character_prompt}"
                 if st.session_state.lock_character_enabled
-                else ""
+                else f"\nCharacter/environment notes: {st.session_state.locked_character_prompt}"
             )
             prompt = f"""
-            Fix and rewrite this rough story into an engaging {num_scenes}-scene story script with distinct emotional reactions and corporate office settings per scene.{char_context}
+            Create a {num_scenes}-scene story script that strictly obeys every user command for characters, nature, backgrounds, locations, and actions.{char_context}
             Return ONLY valid JSON as a list of {num_scenes} objects, with no markdown formatting.
             Each object must have:
-            - "narration": clear, emotional English voiceover text (1-2 sentences)
+            - "narration": clear English voiceover text (1-2 sentences)
             - "kannada_narration": natural, clear Kannada translation/script of that scene's voiceover (1-2 sentences)
-            - "emotion": specific emotion & facial reaction for that scene (e.g., "Overwhelmed & Tense", "Shocked & Guarded", "Sorrowful & Drained", "Resolute & Composed")
-            - "visual": distinct medium or wide corporate office visual description (specific office spot, camera framing, lighting, posture, and facial expression)
-            Rough story: {rough_story.strip()}
+            - "emotion": mood or expression for that scene
+            - "visual": visual scene description honoring the user's requested character, setting/nature/background, camera framing, and action
+            User story & commands: {rough_story.strip()}
             """
             client = genai.Client(api_key=api_key.strip())
             last_exc = None
             parsed_scenes = None
 
-            with st.spinner(f"Polishing {num_scenes} English & Kannada story scenes..."):
+            with st.spinner(f"Creating {num_scenes} English & Kannada scenes from your commands..."):
                 for model_name in fallback_models:
                     for attempt in range(2):
                         try:
@@ -973,7 +1216,7 @@ with tab1:
                     {
                         "narration": str(item.get("narration", "")).strip(),
                         "kannada_narration": str(item.get("kannada_narration", "")).strip(),
-                        "emotion": str(item.get("emotion", "Dense Emotion")).strip(),
+                        "emotion": str(item.get("emotion", "Expressive")).strip(),
                         "visual": str(item.get("visual", "")).strip(),
                     }
                     for item in parsed_scenes[:num_scenes]
@@ -996,8 +1239,8 @@ with tab1:
                     st.session_state[f"nar_{idx}"] = sc["narration"]
                     st.session_state[f"kn_script_{idx}"] = sc["kannada_narration"]
                     st.session_state[f"vis_{idx}"] = sc["visual"]
-                    st.session_state[f"emo_{idx}"] = sc.get("emotion", "Dense Emotion")
-                st.warning(f"Gemini quota/error hit ({last_exc})—created {len(st.session_state.scenes)} distinct fallback scenes.")
+                    st.session_state[f"emo_{idx}"] = sc.get("emotion", "Expressive")
+                st.warning(f"Gemini quota/error hit ({last_exc})—created {len(st.session_state.scenes)} fallback scenes from your command.")
 
     if st.session_state.scenes:
         st.markdown(f"### ✏️ Interactive Story Editor ({len(st.session_state.scenes)} Scenes Active)")
@@ -1031,13 +1274,13 @@ with tab1:
                     )
                     scene["narration"] = nar_val
                     emo_val = st.text_input(
-                        f"Scene {i + 1} Emotion / Facial Reaction",
-                        value=scene.get("emotion", "Dense Emotion"),
+                        f"Scene {i + 1} Mood / Expression",
+                        value=scene.get("emotion", "Expressive"),
                         key=f"emo_{i}",
                     )
                     scene["emotion"] = emo_val
                     vis_val = st.text_input(
-                        f"Scene {i + 1} Action / Camera Visual",
+                        f"Scene {i + 1} Character, Background & Action Command",
                         value=scene.get("visual", ""),
                         key=f"vis_{i}",
                     )
@@ -1069,28 +1312,27 @@ with tab1:
 
 # --- TAB 2: SCENE-WISE VIDEO CREATOR ---
 with tab2:
-    st.subheader("Create Scene-by-Scene Videos")
+    st.subheader("Create Scene-by-Scene Videos from Your Commands")
     art_style = st.selectbox(
         "Choose Visual Style",
         [
-            "Photorealistic cinematic film still, medium or wide framing showing full head and shoulders, natural corporate lighting, lifelike human expressions, 35mm lens",
-            "High-detail 3D CGI animation, expressive lifelike characters, rich corporate office lighting and depth",
-            "Detailed storybook illustration, expressive characters, modern corporate office scenery",
+            "Photorealistic cinematic film still, natural lighting matching the requested environment, lifelike human expressions, 35mm lens",
+            "High-detail 3D CGI animation, expressive lifelike characters, rich environment lighting and depth",
+            "Detailed storybook illustration, expressive characters, rich scenery and atmosphere",
         ],
     )
 
     ref_col1, ref_col2 = st.columns([1.4, 1])
     with ref_col1:
         active_char_prompt = st.text_area(
-            "Active Character & Face Prompt (Synced with Locked Character Prompt)",
+            "Character & Environment Command Prompt",
             value=st.session_state.locked_character_prompt,
             height=90,
         )
-        if st.session_state.lock_character_enabled:
-            st.session_state.locked_character_prompt = active_char_prompt
+        st.session_state.locked_character_prompt = active_char_prompt
     with ref_col2:
         ref_file = st.file_uploader(
-            "Character Reference Image (Optional)",
+            "Character / Scene Reference Image (Optional)",
             type=["png", "jpg", "jpeg", "webp"],
         )
 
@@ -1129,7 +1371,7 @@ with tab2:
     ref_pil = None
     if ref_file is not None:
         ref_pil = Image.open(ref_file).convert("RGB")
-        st.image(ref_pil, caption="Uploaded Character Reference Image", width=260)
+        st.image(ref_pil, caption="Uploaded Reference Image", width=260)
 
     if st.button("🎬 Generate Scene Videos", type="primary"):
         active_scenes = sync_scenes_to_count(
@@ -1153,7 +1395,7 @@ with tab2:
             st.session_state.setdefault(f"nar_{idx}", sc.get("narration", ""))
             st.session_state.setdefault(f"kn_script_{idx}", sc.get("kannada_narration", ""))
             st.session_state.setdefault(f"vis_{idx}", sc.get("visual", ""))
-            st.session_state.setdefault(f"emo_{idx}", sc.get("emotion", "Dense Emotion"))
+            st.session_state.setdefault(f"emo_{idx}", sc.get("emotion", "Expressive"))
 
         scene_subtitles = (
             get_script_lines_for_language(
@@ -1168,14 +1410,10 @@ with tab2:
         st.session_state.gen_batch_id += 1
         batch_id = st.session_state.gen_batch_id
 
-        char_to_use = (
-            st.session_state.locked_character_prompt
-            if st.session_state.lock_character_enabled
-            else active_char_prompt
-        )
+        char_to_use = st.session_state.locked_character_prompt or active_char_prompt
         cast_guard = (
-            f"Exact character count: {int(st.session_state.exact_character_count)} main subject. "
-            f"Keep consistent identity and outfit from {char_to_use}, framed with headroom so face and eyes are never cropped."
+            f"Follow user command strictly: {char_to_use} ({int(st.session_state.exact_character_count)} main subject(s) when applicable). "
+            f"Match whatever setting, background, or nature the user commands."
             if st.session_state.lock_character_enabled
             else char_to_use
         )
@@ -1191,11 +1429,12 @@ with tab2:
             if idx > 0:
                 time.sleep(0.35)
             scene_vis = st.session_state.get(f"vis_{idx}", scene.get("visual", ""))
-            scene_emo = st.session_state.get(f"emo_{idx}", scene.get("emotion", "Dense Emotion"))
+            scene_emo = st.session_state.get(f"emo_{idx}", scene.get("emotion", "Expressive"))
             full_prompt = (
                 f"{art_style}. {cast_guard} "
-                f"Scene {idx + 1} emotion: {scene_emo}. "
-                f"Scene {idx + 1} action & office setting: {scene_vis}"
+                f"Scene {idx + 1} mood: {scene_emo}. "
+                f"Scene {idx + 1} instruction: {scene_vis}. "
+                f"Story context: {rough_story.strip()}"
             ).strip()
 
             pil_img, src_name, src_errs = generate_real_ai_scene(
@@ -1251,6 +1490,10 @@ with tab2:
                     subtitle_text=sub_line,
                     subtitle_lang=tab2_sub_lang,
                     enable_char_motion=True,
+                    brightness=st.session_state.editor_brightness,
+                    contrast=st.session_state.editor_contrast,
+                    saturation=st.session_state.editor_saturation,
+                    blur_radius=st.session_state.editor_blur,
                 )
                 st.session_state.scene_videos.append(vid_path)
 
@@ -1299,7 +1542,7 @@ with tab2:
 
 # --- TAB 3: VOICE & SOUND ---
 with tab3:
-    st.subheader("Select Narrator Voice & Script Language (English or Kannada)")
+    st.subheader("Select Narrator Voice, Upload Audio & Script Language (English or Kannada)")
     voice_map = {
         "Warm Male Storyteller (US)": ("en-US-ChristopherNeural", "English"),
         "Expressive Female Storyteller (US)": ("en-US-AriaNeural", "English"),
@@ -1366,9 +1609,9 @@ with tab3:
                         active_script_lines[0]
                         if active_script_lines
                         else (
-                            "ಮೂವತ್ತೈದರ ವಯಸ್ಸಿನಲ್ಲಿ, ಕಚೇರಿಯ ಪ್ರತಿಯೊಂದು ಗಡುವು ಮೊದಲಿಗಿಂತ ಹೆಚ್ಚು ಭಾರವಾಗಿ ಭಾಸವಾಗುತ್ತದೆ."
+                            "ನೀವು ಬಯಸಿದ ಪ್ರತಿಯೊಂದು ವಿವರದೊಂದಿಗೆ ದೃಶ್ಯ ಜೀವಂತವಾಗುತ್ತಾ ಪ್ರಯಾಣ ಆರಂಭವಾಗುತ್ತದೆ."
                             if selected_script_lang == "Kannada"
-                            else "At thirty-five, every deadline in the corporate office feels heavier than the last."
+                            else "The journey begins as the setting comes alive with every detail you commanded."
                         )
                     )
                     run_async(make_audio(sample_text, voice_id, "sample.mp3"))
@@ -1542,7 +1785,7 @@ with tab3:
 
 # --- TAB 4: RENDER & DOWNLOAD ---
 with tab4:
-    st.subheader("Character Animation, Subtitles & Exact-Size MP4 Export")
+    st.subheader("Final Timeline Assembly, Transitions, Subtitles & Exact-Size MP4 Export")
     c1, c2, c3 = st.columns(3)
     with c1:
         free_motion_style = st.selectbox(
@@ -1560,13 +1803,15 @@ with tab4:
 
     _, active_font_source = _find_font(28, lang=subtitle_lang if subtitle_lang != "None" else "English")
     st.caption(
-        f"Target output size: `{width}x{height}` ({ratio_str}) | Scene Videos ready: `{len(st.session_state.scene_videos)}` | Scene Images ready: `{len(st.session_state.images)}` | Active font: `{active_font_source}`"
+        f"Target size: `{width}x{height}` ({ratio_str}) | Video clips: `{len(st.session_state.scene_videos)}` | "
+        f"Images: `{len(st.session_state.images)}` | Audio tracks: `{len(st.session_state.audio_files)}` | "
+        f"Transition: `{st.session_state.editor_transition}` | Font: `{active_font_source}`"
     )
 
     if st.button("🎬 Render Final MP4 Video", type="primary"):
         has_visuals = bool(st.session_state.scene_videos or st.session_state.images)
-        if not has_visuals or not st.session_state.audio_files:
-            st.error("Make sure both Scene Videos (Tab 2) and Narration (Tab 3) are generated or saved.")
+        if not has_visuals:
+            st.error("Generate scene videos/images in Tab 2 or upload video clips in the Top Studio Video Editor first.")
         else:
             clips = []
             audio_clips = []
@@ -1575,8 +1820,9 @@ with tab4:
             output_file = f"animated_story_b{st.session_state.gen_batch_id}.mp4"
 
             try:
+                total_visual_slots = max(len(st.session_state.scene_videos), len(st.session_state.images))
                 with st.spinner(
-                    f"Stitching {max(len(st.session_state.scene_videos), len(st.session_state.images))}-scene {width}x{height} video with voiceovers and {subtitle_lang} subtitles..."
+                    f"Rendering {total_visual_slots}-clip {width}x{height} video with {st.session_state.editor_transition} transitions..."
                 ):
                     if subtitle_lang == "Kannada":
                         sub_lines = get_script_lines_for_language(
@@ -1591,18 +1837,20 @@ with tab4:
                             gemini_key=api_key,
                         )
                     else:
-                        sub_lines = [""] * len(st.session_state.audio_files)
+                        sub_lines = [""] * total_visual_slots
 
-                    while len(sub_lines) < len(st.session_state.audio_files):
+                    while len(sub_lines) < total_visual_slots:
                         sub_lines.append("")
 
-                    scene_total = max(len(st.session_state.scene_videos), len(st.session_state.images))
-                    for i, aud_p in enumerate(st.session_state.audio_files):
-                        if i >= scene_total:
-                            break
-                        audio_clip = AudioFileClip(aud_p)
-                        audio_clips.append(audio_clip)
-                        target_duration = max(float(audio_clip.duration or 1.0) + 0.3, 1.0)
+                    for i in range(total_visual_slots):
+                        aud_p = st.session_state.audio_files[i] if i < len(st.session_state.audio_files) else None
+                        aud_clip = None
+                        if aud_p and os.path.exists(aud_p):
+                            aud_clip = AudioFileClip(aud_p)
+                            audio_clips.append(aud_clip)
+                            target_duration = max(float(aud_clip.duration or 1.0) + 0.3, 1.0)
+                        else:
+                            target_duration = 4.0
 
                         if i < len(st.session_state.scene_videos) and os.path.exists(st.session_state.scene_videos[i]):
                             src_vid = VideoFileClip(st.session_state.scene_videos[i])
@@ -1622,12 +1870,21 @@ with tab4:
                                 subtitle_text=sub_lines[i] if i < len(sub_lines) else "",
                                 subtitle_lang=subtitle_lang,
                                 enable_char_motion=enable_char_motion,
+                                brightness=st.session_state.editor_brightness,
+                                contrast=st.session_state.editor_contrast,
+                                saturation=st.session_state.editor_saturation,
+                                blur_radius=st.session_state.editor_blur,
                             )
 
-                        scene_clip = apply_audio(motion_clip, audio_clip)
-                        clips.append(scene_clip)
+                        if aud_clip is not None:
+                            motion_clip = apply_audio(motion_clip, aud_clip)
+                        clips.append(motion_clip)
 
-                    final_video = concatenate_videoclips(clips, method="compose")
+                    final_video = apply_clip_transition(
+                        clips,
+                        transition_name=st.session_state.editor_transition,
+                        trans_sec=st.session_state.editor_transition_sec,
+                    )
                     final_video.write_videofile(
                         output_file,
                         fps=24,
