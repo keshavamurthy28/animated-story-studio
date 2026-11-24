@@ -1,7 +1,7 @@
 streamlit
 google-genai
 edge-tts
-moviepy
-Pillow
+moviepy==1.0.3
+Pillow==9.5.0
 requests
 fal-client
