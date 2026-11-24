@@ -6,6 +6,7 @@ import os
 import tempfile
 import textwrap
 import time
+import urllib.parse
 from io import BytesIO
 
 import edge_tts
@@ -38,7 +39,7 @@ for key, default in [
     ("own_voice_table", {}),
     (
         "locked_character_prompt",
-        "Four teenage boys (12-15 years old): Boy 1 is chubby with short black hair and a red t-shirt; Boy 2 is lean with messy dark hair and a blue t-shirt; Boy 3 is slim with a cap and green shirt; Boy 4 is slim with a yellow shirt. Plus one large brown forest bear.",
+        "Four teenage boys (12-15 years old, one chubby boy, one lean boy, two slim boys) wearing simple casual clothes, and a large brown forest bear",
     ),
     ("exact_character_count", 4),
     ("lock_character_enabled", True),
@@ -121,7 +122,6 @@ def _find_font(font_size, lang="English"):
         font_urls = [
             "https://raw.githubusercontent.com/notofonts/kannada/main/hinted/ttf/NotoSansKannada/NotoSansKannada-Regular.ttf",
             "https://github.com/google/fonts/raw/main/ofl/notosanskannada/static/NotoSansKannada-Regular.ttf",
-            "https://raw.githubusercontent.com/google/fonts/main/ofl/notosanskannada/static/NotoSansKannada-Regular.ttf",
         ]
         for url in font_urls:
             try:
@@ -150,7 +150,7 @@ def _find_font(font_size, lang="English"):
 
 
 def translate_lines_to_kannada(gemini_key, lines):
-    """Translate a list of narration lines into Kannada using Gemini."""
+    """Translate a list of narration lines into Kannada using Gemini when available."""
     if not gemini_key or not gemini_key.strip() or not lines:
         return lines
 
@@ -179,6 +179,21 @@ def translate_lines_to_kannada(gemini_key, lines):
         except Exception:
             continue
     return lines
+
+
+def build_fallback_scenes_from_rough_story(rough_text, count, char_prompt):
+    """Build scene objects deterministically if Gemini API has no quota or fails."""
+    clean_story = " ".join(rough_text.strip().split())
+    sentences = [s.strip() for s in clean_story.replace("!", ".").replace("?", ".").split(".") if s.strip()]
+    scenes = []
+    for idx in range(count):
+        base_line = sentences[idx % len(sentences)] if sentences else clean_story
+        scenes.append({
+            "narration": f"Scene {idx + 1}: {base_line}.",
+            "kannada_narration": "",
+            "visual": f"{base_line}, featuring {char_prompt}, cinematic lighting, scene {idx + 1}",
+        })
+    return scenes
 
 
 def get_script_lines_for_language(scenes, script_lang="English", gemini_key=""):
@@ -275,7 +290,7 @@ def draw_subtitle_on_frame(frame_pil, subtitle_text, target_w, target_h, lang="E
     draw = ImageDraw.Draw(img_rgba)
 
     font_size = max(24, int(round(target_w * 0.036)))
-    font, font_src = _find_font(font_size, lang=lang)
+    font, _ = _find_font(font_size, lang=lang)
     lang_code = "kn" if lang == "Kannada" else "en"
 
     chars_per_line = max(14, int(target_w / max(11, font_size * 0.64)))
@@ -418,7 +433,6 @@ def build_motion_clip(
 
 def modify_reference_into_scene(ref_pil, target_w, target_h, scene_idx, art_style):
     """Adapt an uploaded reference photo/image into an exact target_w x target_h scene frame."""
-    resampling = getattr(Image, "Resampling", Image).LANCZOS
     base = ensure_exact_size(ref_pil, target_w, target_h)
     style_lower = (art_style or "").lower()
     if "ghibli" in style_lower or "watercolor" in style_lower:
@@ -471,6 +485,29 @@ def generate_cloudflare_flux_image(cf_account_id, cf_api_token, prompt_text, tar
     raise ValueError(f"Unexpected Cloudflare response: {data}")
 
 
+def generate_pollinations_image(prompt_text, target_w, target_h, seed=42):
+    """Fallback AI image generator via Pollinations.ai when primary quotas are reached."""
+    w_p = max(256, min(1024, (target_w // 8) * 8))
+    h_p = max(256, min(1024, (target_h // 8) * 8))
+    short_prompt = prompt_text[:320]
+    encoded_prompt = urllib.parse.quote(short_prompt, safe="")
+    endpoints = [
+        f"https://gen.pollinations.ai/image/{encoded_prompt}?model=flux&width={w_p}&height={h_p}&seed={seed}",
+        f"https://image.pollinations.ai/prompt/{encoded_prompt}?width={w_p}&height={h_p}&seed={seed}&nologo=true",
+    ]
+    last_err = None
+    for url in endpoints:
+        try:
+            resp = requests.get(url, timeout=60)
+            if resp.ok and "image/" in resp.headers.get("Content-Type", ""):
+                img = Image.open(BytesIO(resp.content)).convert("RGB")
+                return ensure_exact_size(img, target_w, target_h)
+            last_err = RuntimeError(f"HTTP {resp.status_code}")
+        except Exception as exc:
+            last_err = exc
+    raise RuntimeError(f"Pollinations fallback failed: {last_err}")
+
+
 def generate_real_ai_scene(
     engine_choice,
     cf_account_id,
@@ -484,70 +521,100 @@ def generate_real_ai_scene(
     scene_idx,
     ref_pil=None,
 ):
-    """Generate realistic AI scene images via Cloudflare Workers AI, Hugging Face, or Gemini."""
+    """Generate AI scene images with automatic failover across configured engines & Pollinations."""
     errors = []
 
-    if engine_choice == "Cloudflare Workers AI (Free Daily FLUX)":
+    def try_cloudflare():
         if cf_account_id.strip() and cf_api_token.strip():
+            img = generate_cloudflare_flux_image(
+                cf_account_id, cf_api_token, prompt_text, target_w, target_h, seed=100 + scene_idx
+            )
+            return img, "Cloudflare FLUX.1-schnell"
+        raise RuntimeError("Missing Cloudflare Account ID or API Token.")
+
+    def try_huggingface():
+        if not hf_token.strip():
+            raise RuntimeError("Missing Hugging Face Token.")
+        client = InferenceClient(token=hf_token.strip())
+        w_hf = max(512, min(1024, (target_w // 8) * 8))
+        h_hf = max(512, min(1024, (target_h // 8) * 8))
+        last_hf_err = None
+        for model_id in [
+            "black-forest-labs/FLUX.1-schnell",
+            "stabilityai/stable-diffusion-xl-base-1.0",
+        ]:
             try:
-                img = generate_cloudflare_flux_image(
-                    cf_account_id, cf_api_token, prompt_text, target_w, target_h, seed=100 + scene_idx
+                img = client.text_to_image(
+                    prompt=prompt_text,
+                    model=model_id,
+                    width=w_hf,
+                    height=h_hf,
                 )
-                return img, "Cloudflare FLUX.1-schnell", []
+                return ensure_exact_size(img.convert("RGB"), target_w, target_h), f"HF {model_id}"
             except Exception as exc:
-                errors.append(f"Cloudflare Workers AI: {exc}")
-        else:
-            errors.append("Missing Cloudflare Account ID or API Token in sidebar.")
+                last_hf_err = exc
+        raise RuntimeError(str(last_hf_err))
 
-    if engine_choice == "Hugging Face (FLUX / SDXL)" or (not errors and hf_token.strip()):
-        if hf_token.strip():
-            client = InferenceClient(token=hf_token.strip())
-            w_hf = max(512, min(1024, (target_w // 8) * 8))
-            h_hf = max(512, min(1024, (target_h // 8) * 8))
-            for model_id in [
-                "black-forest-labs/FLUX.1-schnell",
-                "stabilityai/stable-diffusion-xl-base-1.0",
-            ]:
-                try:
-                    img = client.text_to_image(
-                        prompt=prompt_text,
-                        model=model_id,
-                        width=w_hf,
-                        height=h_hf,
-                    )
-                    return ensure_exact_size(img.convert("RGB"), target_w, target_h), f"HF {model_id}", []
-                except Exception as exc:
-                    errors.append(f"{model_id}: {exc}")
-        elif engine_choice == "Hugging Face (FLUX / SDXL)":
-            errors.append("Missing Hugging Face Token in sidebar.")
-
-    if engine_choice == "Gemini Image" or (gemini_key.strip() and len(errors) > 0):
-        if gemini_key.strip():
+    def try_gemini():
+        if not gemini_key.strip():
+            raise RuntimeError("Missing Gemini API Key.")
+        client = genai.Client(api_key=gemini_key.strip())
+        contents = [ref_pil.convert("RGB"), prompt_text] if ref_pil is not None else prompt_text
+        last_gem_err = None
+        for model_id in ["gemini-3.1-flash-lite-image", "gemini-3.1-flash-image"]:
             try:
-                client = genai.Client(api_key=gemini_key.strip())
-                contents = [ref_pil.convert("RGB"), prompt_text] if ref_pil is not None else prompt_text
-                for model_id in ["gemini-3.1-flash-lite-image", "gemini-3.1-flash-image"]:
-                    try:
-                        response = client.models.generate_content(
-                            model=model_id,
-                            contents=contents,
-                            config=types.GenerateContentConfig(
-                                response_modalities=["IMAGE"],
-                                image_config=types.ImageConfig(aspect_ratio=ratio_str),
-                            ),
-                        )
-                        for cand in getattr(response, "candidates", None) or []:
-                            content = getattr(cand, "content", None)
-                            for part in getattr(content, "parts", None) or []:
-                                inline = getattr(part, "inline_data", None)
-                                if inline and getattr(inline, "data", None):
-                                    img = Image.open(BytesIO(inline.data)).convert("RGB")
-                                    return ensure_exact_size(img, target_w, target_h), f"Gemini {model_id}", []
-                        errors.append(f"{model_id}: no image returned")
-                    except Exception as exc:
-                        errors.append(f"{model_id}: {exc}")
+                response = client.models.generate_content(
+                    model=model_id,
+                    contents=contents,
+                    config=types.GenerateContentConfig(
+                        response_modalities=["IMAGE"],
+                        image_config=types.ImageConfig(aspect_ratio=ratio_str),
+                    ),
+                )
+                for cand in getattr(response, "candidates", None) or []:
+                    content = getattr(cand, "content", None)
+                    for part in getattr(content, "parts", None) or []:
+                        inline = getattr(part, "inline_data", None)
+                        if inline and getattr(inline, "data", None):
+                            img = Image.open(BytesIO(inline.data)).convert("RGB")
+                            return ensure_exact_size(img, target_w, target_h), f"Gemini {model_id}"
+                last_gem_err = RuntimeError(f"{model_id}: no image returned")
             except Exception as exc:
-                errors.append(f"Gemini client: {exc}")
+                last_gem_err = exc
+        raise RuntimeError(str(last_gem_err))
+
+    def try_pollinations():
+        img = generate_pollinations_image(prompt_text, target_w, target_h, seed=200 + scene_idx)
+        return img, "Pollinations AI Fallback"
+
+    if engine_choice == "Cloudflare Workers AI (Free Daily FLUX)":
+        ordered_runners = [
+            ("Cloudflare", try_cloudflare),
+            ("Hugging Face", try_huggingface),
+            ("Gemini", try_gemini),
+            ("Pollinations", try_pollinations),
+        ]
+    elif engine_choice == "Hugging Face (FLUX / SDXL)":
+        ordered_runners = [
+            ("Hugging Face", try_huggingface),
+            ("Cloudflare", try_cloudflare),
+            ("Gemini", try_gemini),
+            ("Pollinations", try_pollinations),
+        ]
+    else:
+        ordered_runners = [
+            ("Gemini", try_gemini),
+            ("Cloudflare", try_cloudflare),
+            ("Hugging Face", try_huggingface),
+            ("Pollinations", try_pollinations),
+        ]
+
+    for label, runner in ordered_runners:
+        try:
+            img, src_name = runner()
+            return img, src_name, errors
+        except Exception as exc:
+            errors.append(f"{label}: {exc}")
 
     if ref_pil is not None:
         return (
@@ -561,7 +628,7 @@ def generate_real_ai_scene(
 
 st.title("🎬 AI Animated Story Studio")
 st.caption(
-    "Locked character count & faces, character reference upload, interactive English & Kannada story editor, voiceovers, character motion & lip-sync, and exact-dimension MP4 export."
+    "Multi-engine AI scene failover, locked character count & faces, interactive English & Kannada story editor, voiceovers, lip-sync, and exact-size MP4 export."
 )
 
 with st.sidebar:
@@ -621,8 +688,17 @@ with tab1:
     num_scenes = st.slider("Number of Scenes", 3, 6, 4)
 
     if st.button("✨ Polish Story & Create Scenes", type="primary"):
-        if not api_key or not rough_story.strip():
-            st.error("Please enter your Gemini API Key in the sidebar and write a rough story.")
+        if not rough_story.strip():
+            st.error("Please write a rough story first.")
+        elif not api_key or not api_key.strip():
+            st.session_state.scenes = build_fallback_scenes_from_rough_story(
+                rough_story, num_scenes, st.session_state.locked_character_prompt
+            )
+            for idx, sc in enumerate(st.session_state.scenes):
+                st.session_state[f"nar_{idx}"] = sc["narration"]
+                st.session_state[f"kn_script_{idx}"] = sc["kannada_narration"]
+                st.session_state[f"vis_{idx}"] = sc["visual"]
+            st.warning("No Gemini API Key provided—created structured scenes directly from your rough story.")
         else:
             fallback_models = [
                 "gemini-3.8-flash",
@@ -694,7 +770,14 @@ with tab1:
                     st.session_state.kannada_subtitles[idx] = sc["kannada_narration"]
                 st.success("English & Kannada scripts ready! Edit any scene below or move to Tab 2.")
             else:
-                st.error(f"Could not generate script after retries/fallbacks: {last_exc}")
+                st.session_state.scenes = build_fallback_scenes_from_rough_story(
+                    rough_story, num_scenes, st.session_state.locked_character_prompt
+                )
+                for idx, sc in enumerate(st.session_state.scenes):
+                    st.session_state[f"nar_{idx}"] = sc["narration"]
+                    st.session_state[f"kn_script_{idx}"] = sc["kannada_narration"]
+                    st.session_state[f"vis_{idx}"] = sc["visual"]
+                st.warning(f"Gemini quota/error hit ({last_exc})—created fallback scenes so you can keep working.")
 
     if st.session_state.scenes:
         st.markdown("### ✏️ Interactive Story Editor (English Script, Kannada Script & Visuals)")
@@ -829,6 +912,8 @@ with tab2:
         all_errors = []
 
         for idx, scene in enumerate(active_scenes):
+            if idx > 0:
+                time.sleep(1.0)
             full_prompt = (
                 f"{art_style}. {cast_guard} "
                 f"Scene {idx + 1} action: {scene['visual']}"
@@ -865,7 +950,7 @@ with tab2:
             )
         else:
             st.error(
-                "No real AI image was generated because no active image API credentials were provided or the image API returned an error/quota limit."
+                "No AI image was generated across any engine. Expand API / Quota Details below to inspect provider responses."
             )
 
         if all_errors:
