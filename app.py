@@ -10,8 +10,14 @@ import fal_client
 import requests
 import streamlit as st
 from google import genai
-from moviepy.editor import AudioFileClip, ImageClip, VideoFileClip, concatenate_videoclips
 from PIL import Image
+
+try:
+    from moviepy.editor import AudioFileClip, ImageClip, VideoFileClip, concatenate_videoclips
+    MOVIEPY_V2 = False
+except ModuleNotFoundError:
+    from moviepy import AudioFileClip, ImageClip, VideoFileClip, concatenate_videoclips
+    MOVIEPY_V2 = True
 
 st.set_page_config(
     page_title="AI Animated Story Studio",
@@ -56,6 +62,22 @@ def extract_video_url(result):
             if "video" in data and isinstance(data["video"], dict) and "url" in data["video"]:
                 return data["video"]["url"]
     raise ValueError(f"Unexpected video response format: {result}")
+
+
+def apply_duration(clip, duration):
+    return clip.with_duration(duration) if MOVIEPY_V2 else clip.set_duration(duration)
+
+
+def apply_audio(clip, audio):
+    return clip.with_audio(audio) if MOVIEPY_V2 else clip.set_audio(audio)
+
+
+def apply_subclip(clip, start_t, end_t):
+    return clip.subclipped(start_t, end_t) if MOVIEPY_V2 else clip.subclip(start_t, end_t)
+
+
+def apply_position(clip, pos):
+    return clip.with_position(pos) if MOVIEPY_V2 else clip.set_position(pos)
 
 
 st.title("🎬 AI Animated Story Studio")
@@ -319,15 +341,14 @@ with tab4:
                             if vid.duration < target_duration:
                                 loops = int(target_duration // vid.duration) + 1
                                 vid = concatenate_videoclips([vid] * loops)
-                            scene_clip = vid.subclip(0, target_duration).set_audio(audio_clip)
+                            trimmed = apply_subclip(vid, 0, target_duration)
+                            scene_clip = apply_audio(trimmed, audio_clip)
                         else:
-                            scene_clip = (
-                                ImageClip(st.session_state.images[i])
-                                .set_duration(target_duration)
-                                .resize(lambda t: 1 + 0.04 * t)
-                                .set_position(("center", "center"))
-                                .set_audio(audio_clip)
-                            )
+                            img_c = ImageClip(st.session_state.images[i])
+                            img_c = apply_duration(img_c, target_duration)
+                            img_c = img_c.resize(lambda t: 1 + 0.04 * t)
+                            img_c = apply_position(img_c, ("center", "center"))
+                            scene_clip = apply_audio(img_c, audio_clip)
                         clips.append(scene_clip)
 
                     final_video = concatenate_videoclips(clips, method="compose")
