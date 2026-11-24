@@ -1,8 +1,8 @@
-streamlit
-google-genai
-huggingface_hub
-edge-tts
-moviepy
-Pillow
-requests
-fal-client
+streamlit>=1.38.0
+pillow>=10.3.0
+numpy>=1.26.0
+requests>=2.31.0
+edge-tts>=6.1.12
+moviepy>=2.0.0
+google-genai>=0.3.0
+huggingface_hub>=0.24.0
