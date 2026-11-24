@@ -45,7 +45,6 @@ st.set_page_config(
     layout="wide",
 )
 
-# High-readability, comfortable dark studio UI
 st.markdown(
     """
     <style>
@@ -81,13 +80,6 @@ st.markdown(
         color: #9da7b3;
         font-size: 14px;
     }
-    .readable-card {
-        background: #161b22;
-        border: 1px solid #2b313a;
-        border-radius: 12px;
-        padding: 14px 16px;
-        margin-bottom: 12px;
-    }
     .stButton > button {
         border-radius: 10px;
         padding: 0.55rem 1rem;
@@ -109,6 +101,7 @@ DEFAULT_SCENES = [
         "kannada_narration": "ನೀವು ಬಯಸಿದ ಪ್ರತಿಯೊಂದು ವಿವರದೊಂದಿಗೆ ದೃಶ್ಯ ಜೀವಂತವಾಗುತ್ತಾ ಪ್ರಯಾಣ ಆರಂಭವಾಗುತ್ತದೆ.",
         "emotion": "Focused & Present",
         "motion": "Zoom In",
+        "suggested_broll": "Wide establishing B-roll shot showing environment depth, ambient lighting, and subject entrance",
         "suggested_fx": "Cinematic Vignette",
         "suggested_sfx": "🌲 Forest Birds",
         "visual": (
@@ -121,6 +114,7 @@ DEFAULT_SCENES = [
         "kannada_narration": "ಹಠಾತ್ ತಿರುವು ವಾತಾವರಣವನ್ನು ಬದಲಾಯಿಸುತ್ತದೆ ಮತ್ತು ಆ ಕ್ಷಣದ ಪ್ರತಿಕ್ರಿಯೆಯನ್ನು ಪರೀಕ್ಷಿಸುತ್ತದೆ.",
         "emotion": "Alert & Determined",
         "motion": "Pan Right",
+        "suggested_broll": "Dynamic push-in B-roll cut capturing reaction, subtle hand/body motion, and environmental shift",
         "suggested_fx": "Zoom Punch",
         "suggested_sfx": "💥 Vine Boom (Meme)",
         "visual": (
@@ -133,6 +127,7 @@ DEFAULT_SCENES = [
         "kannada_narration": "ಬದಲಾಗುವ ಪರಿಸರ ಮತ್ತು ಭಾವನೆಗಳ ಮೂಲಕ ಕಥೆಯು ಸ್ಪಷ್ಟ ತಿರುವಿನತ್ತ ಸಾಗುತ್ತದೆ.",
         "emotion": "Reflective & Resilient",
         "motion": "Zoom Out",
+        "suggested_broll": "Slow pull-back B-roll framing character within broader scenery and atmospheric light",
         "suggested_fx": "None",
         "suggested_sfx": "🌊 Ocean Waves",
         "visual": (
@@ -145,6 +140,7 @@ DEFAULT_SCENES = [
         "kannada_narration": "ಸ್ಥಿರ ನಿರ್ಧಾರದೊಂದಿಗೆ ದೃಶ್ಯವು ಒಂದು ಸ್ಮರಣೀಯ ಅಂತ್ಯದತ್ತ ಸಾಗುತ್ತದೆ.",
         "emotion": "Composed & Hopeful",
         "motion": "Pan Left",
+        "suggested_broll": "Calm closing B-roll shot with warm rim light and composed framing for final beat",
         "suggested_fx": "Cinematic Vignette",
         "suggested_sfx": "🔥 Campfire Crackle",
         "visual": (
@@ -188,6 +184,18 @@ FORMAT_PRESETS = {
     "3:4 Classic Portrait": (900, 1200, "3:4"),
 }
 
+VIDEO_FX_CHOICES = [
+    "None",
+    "Zoom Punch",
+    "Shake",
+    "Flash White",
+    "Glitch RGB",
+    "Vintage Sepia",
+    "Cinematic Vignette",
+]
+
+MOTION_CHOICES = ["Auto Alternate", "Zoom In", "Zoom Out", "Pan Right", "Pan Left"]
+
 for key, default in [
     ("scenes", [dict(s) for s in DEFAULT_SCENES]),
     ("images", []),
@@ -220,6 +228,7 @@ for key, default in [
     ("editor_transition_sec", 0.5),
     ("editor_video_fx", "None"),
     ("scene_audio_fx", {}),
+    ("scene_fx_overrides", {}),
 ]:
     if key not in st.session_state:
         st.session_state[key] = default
@@ -230,6 +239,8 @@ for idx, sc in enumerate(st.session_state.scenes):
     st.session_state.setdefault(f"vis_{idx}", sc.get("visual", ""))
     st.session_state.setdefault(f"emo_{idx}", sc.get("emotion", "Expressive"))
     st.session_state.setdefault(f"mot_{idx}", sc.get("motion", "Auto Alternate"))
+    st.session_state.setdefault(f"broll_{idx}", sc.get("suggested_broll", "Establishing cinematic B-roll shot"))
+    st.session_state.setdefault(f"sfx_sug_{idx}", sc.get("suggested_sfx", "None"))
 
 
 def run_async(coro):
@@ -263,6 +274,18 @@ def apply_position(clip, pos_fn):
     return clip.with_position(pos_fn) if MOVIEPY_V2 else clip.set_position(pos_fn)
 
 
+def subclip_safe(clip, start_t, end_t):
+    """Trim/split a MoviePy clip across v1 and v2 APIs."""
+    s_val = max(0.0, float(start_t))
+    e_val = max(s_val + 0.1, float(end_t))
+    if clip.duration is not None:
+        e_val = min(float(clip.duration), e_val)
+        s_val = min(s_val, max(0.0, e_val - 0.1))
+    if MOVIEPY_V2 and hasattr(clip, "subclipped"):
+        return clip.subclipped(s_val, e_val)
+    return clip.subclip(s_val, e_val)
+
+
 def scale_audio_volume(clip, factor):
     if clip is None or abs(factor - 1.0) < 1e-3:
         return clip
@@ -271,6 +294,90 @@ def scale_audio_volume(clip, factor):
     if hasattr(clip, "volumex"):
         return clip.volumex(factor)
     return clip
+
+
+def get_video_duration_safe(video_path):
+    """Return video duration in seconds without leaking handles."""
+    if not video_path or not os.path.exists(video_path):
+        return 0.0
+    vc = None
+    try:
+        vc = VideoFileClip(video_path)
+        return float(vc.duration or 0.0)
+    except Exception:
+        return 0.0
+    finally:
+        if vc is not None:
+            try:
+                vc.close()
+            except Exception:
+                pass
+
+
+def trim_video_clip_file(src_path, out_path, start_sec, end_sec):
+    """Trim [start_sec, end_sec] from a video clip and save to out_path."""
+    src = None
+    seg = None
+    try:
+        src = VideoFileClip(src_path)
+        seg = subclip_safe(src, start_sec, end_sec)
+        seg.write_videofile(
+            out_path,
+            fps=24,
+            codec="libx264",
+            audio_codec="aac" if src.audio is not None else None,
+            audio=src.audio is not None,
+            logger=None,
+        )
+        return out_path
+    finally:
+        for obj in (seg, src):
+            if obj is not None:
+                try:
+                    obj.close()
+                except Exception:
+                    pass
+
+
+def split_video_clip_file(src_path, split_sec, part_a_path, part_b_path):
+    """Split a video clip at split_sec into two separate MP4 files."""
+    src = None
+    part_a = None
+    part_b = None
+    try:
+        src = VideoFileClip(src_path)
+        dur = float(src.duration or 0.0)
+        cut = max(0.2, min(dur - 0.2, float(split_sec)))
+        if dur <= 0.5:
+            raise ValueError("Clip is too short to split.")
+
+        part_a = subclip_safe(src, 0.0, cut)
+        part_a.write_videofile(
+            part_a_path,
+            fps=24,
+            codec="libx264",
+            audio_codec="aac" if src.audio is not None else None,
+            audio=src.audio is not None,
+            logger=None,
+        )
+
+        part_b = subclip_safe(src, cut, dur)
+        part_b.write_videofile(
+            part_b_path,
+            fps=24,
+            codec="libx264",
+            audio_codec="aac" if src.audio is not None else None,
+            audio=src.audio is not None,
+            logger=None,
+        )
+        return part_a_path, part_b_path
+    finally:
+        for obj in (part_a, part_b, src):
+            if obj is not None:
+                try:
+                    obj.close()
+                except Exception:
+                    pass
 
 
 def ensure_exact_size(pil_img, target_w, target_h, bg_mode="Blur Canvas"):
@@ -357,7 +464,7 @@ def apply_pil_effects(
 
 def download_fx_audio(fx_name, fx_url):
     """Download and cache preset audio effects locally."""
-    if not fx_url:
+    if not fx_url or fx_name == "None":
         return None
     os.makedirs("fx_audio_cache", exist_ok=True)
     safe_name = "".join(c for c in fx_name if c.isalnum() or c in ("_", "-")).strip() or "sfx"
@@ -464,22 +571,121 @@ def translate_lines_to_kannada(gemini_key, lines):
 
 
 def infer_ml_scene_direction(text, idx):
-    """Smart AI/ML-style heuristic director for motion, VFX, and SFX when offline or no LLM key."""
+    """AI/ML-style director for B-roll shot, motion, VFX, and SFX."""
     low = (text or "").lower()
     if any(w in low for w in ["funny", "joke", "oops", "slip", "laugh", "comedy", "silly", "meme"]):
-        return "Zoom Punch", "Zoom Punch", "😂 Funny Laugh"
+        return (
+            "Quick cut comedy B-roll reaction & expressive close-up with lively framing",
+            "Zoom Punch",
+            "Zoom Punch",
+            "😂 Funny Laugh",
+        )
     if any(w in low for w in ["rain", "storm", "thunder", "lightning"]):
-        return "Pan Left", "Cinematic Vignette", "🌿 Rain & Thunder"
+        return (
+            "Moody weather B-roll of falling rain, wet surfaces, and dramatic overcast light",
+            "Pan Left",
+            "Cinematic Vignette",
+            "🌿 Rain & Thunder",
+        )
     if any(w in low for w in ["ocean", "sea", "wave", "beach", "water", "river"]):
-        return "Pan Right", "None", "🌊 Ocean Waves"
+        return (
+            "Sweeping coastal/water B-roll with gentle movement and natural horizon reflections",
+            "Pan Right",
+            "None",
+            "🌊 Ocean Waves",
+        )
     if any(w in low for w in ["fire", "flame", "camp", "warm", "torch"]):
-        return "Zoom In", "Cinematic Vignette", "🔥 Campfire Crackle"
+        return (
+            "Warm ember & light-flicker B-roll creating intimacy and depth",
+            "Zoom In",
+            "Cinematic Vignette",
+            "🔥 Campfire Crackle",
+        )
     if any(w in low for w in ["forest", "jungle", "tree", "bird", "nature", "morning"]):
-        return "Pan Right", "None", "🌲 Forest Birds"
+        return (
+            "Nature B-roll through foliage and sunlight shafts with calm pacing",
+            "Pan Right",
+            "None",
+            "🌲 Forest Birds",
+        )
     if any(w in low for w in ["shock", "twist", "sudden", "boom", "dramatic", "wow"]):
-        return "Zoom Punch", "Shake", "💥 Vine Boom (Meme)"
+        return (
+            "High-tension reveal B-roll with tight framing and punchy pacing",
+            "Zoom Punch",
+            "Shake",
+            "💥 Vine Boom (Meme)",
+        )
     motions = ["Zoom In", "Pan Right", "Zoom Out", "Pan Left"]
-    return motions[idx % len(motions)], "None", "None"
+    broll_shots = [
+        "Establishing cinematic B-roll setting the scene and environmental mood",
+        "Medium tracking B-roll following character action and surroundings",
+        "Detail & atmosphere B-roll emphasizing depth and emotion",
+        "Closing narrative B-roll bringing the beat to a clean finish",
+    ]
+    return broll_shots[idx % len(broll_shots)], motions[idx % len(motions)], "None", "None"
+
+
+def ai_suggest_broll_and_fx_for_scenes(gemini_key, scenes):
+    """Generate scene-by-scene AI B-roll, motion, VFX, and SFX suggestions."""
+    updated = []
+    for idx, sc in enumerate(scenes):
+        b_sug, m_sug, fx_sug, sfx_sug = infer_ml_scene_direction(
+            f"{sc.get('narration', '')} {sc.get('visual', '')} {sc.get('emotion', '')}", idx
+        )
+        copy_sc = dict(sc)
+        copy_sc["suggested_broll"] = sc.get("suggested_broll") or b_sug
+        copy_sc["motion"] = sc.get("motion") or m_sug
+        copy_sc["suggested_fx"] = sc.get("suggested_fx") or fx_sug
+        copy_sc["suggested_sfx"] = sc.get("suggested_sfx") or sfx_sug
+        updated.append(copy_sc)
+
+    if gemini_key and gemini_key.strip() and updated:
+        client = genai.Client(api_key=gemini_key.strip())
+        compact_input = [
+            {
+                "scene": i + 1,
+                "narration": s.get("narration", ""),
+                "emotion": s.get("emotion", ""),
+                "visual": s.get("visual", ""),
+            }
+            for i, s in enumerate(updated)
+        ]
+        prompt = (
+            "You are a film & reels director. For each scene in the JSON input, suggest:\n"
+            "- 'broll': concise 1-line B-roll shot idea\n"
+            "- 'motion': one of ['Auto Alternate', 'Zoom In', 'Zoom Out', 'Pan Right', 'Pan Left']\n"
+            "- 'fx': one of ['None', 'Zoom Punch', 'Shake', 'Flash White', 'Glitch RGB', 'Vintage Sepia', 'Cinematic Vignette']\n"
+            "Return ONLY a valid JSON array matching the scene count, no markdown.\n"
+            + json.dumps(compact_input, ensure_ascii=False)
+        )
+        for model_name in [
+            "gemini-3.8-flash",
+            "gemini-3.6-flash",
+            "gemini-3.5-flash-lite",
+            "gemini-3.1-flash-lite",
+        ]:
+            try:
+                resp = client.models.generate_content(model=model_name, contents=prompt)
+                raw = (resp.text or "").strip()
+                if raw.startswith("```"):
+                    raw = "\n".join(
+                        ln for ln in raw.splitlines() if not ln.strip().startswith("```")
+                    ).strip()
+                parsed = json.loads(raw)
+                if isinstance(parsed, list):
+                    for i, item in enumerate(parsed[: len(updated)]):
+                        if isinstance(item, dict):
+                            if item.get("broll"):
+                                updated[i]["suggested_broll"] = str(item["broll"]).strip()
+                            if item.get("motion") in MOTION_CHOICES:
+                                updated[i]["motion"] = item["motion"]
+                            if item.get("fx") in VIDEO_FX_CHOICES:
+                                updated[i]["suggested_fx"] = item["fx"]
+                    break
+            except Exception:
+                continue
+
+    return updated
 
 
 def build_fallback_scenes_from_rough_story(rough_text, count, char_prompt):
@@ -509,12 +715,13 @@ def build_fallback_scenes_from_rough_story(rough_text, count, char_prompt):
     for idx in range(target_count):
         base_line = sentences[idx % len(sentences)] if sentences else (clean_story or "Custom scene")
         emo_label, beat_desc = beat_moods[idx % len(beat_moods)]
-        motion_sug, fx_sug, sfx_sug = infer_ml_scene_direction(f"{base_line} {clean_char}", idx)
+        broll_sug, motion_sug, fx_sug, sfx_sug = infer_ml_scene_direction(f"{base_line} {clean_char}", idx)
         scenes.append({
             "narration": f"{base_line}.",
             "kannada_narration": "",
             "emotion": emo_label,
             "motion": motion_sug,
+            "suggested_broll": broll_sug,
             "suggested_fx": fx_sug,
             "suggested_sfx": sfx_sug,
             "visual": (
@@ -1148,7 +1355,7 @@ st.markdown(
             <span class="studio-pill">AI STUDIO PRO</span>
             <span style="font-weight:700;font-size:18px;">Movie, Shorts & Reels Creation Suite</span>
         </div>
-        <div class="studio-sub">AI Scene Direction • Live Canvas Preview • Voice, BGM & Sound FX • 9:16 & 16:9 Export</div>
+        <div class="studio-sub">AI B-Roll & FX • Clip Trim & Split • Live Canvas Preview • Voice, BGM & SFX • 9:16 & 16:9</div>
     </div>
     """,
     unsafe_allow_html=True,
@@ -1198,15 +1405,13 @@ with st.sidebar:
         height=110,
     )
 
-# --- TOP VISUAL STAGE & FRIENDLY EDITOR ---
-with st.expander("🖥️ Live Preview Stage & Quick Studio Controls", expanded=True):
+# --- TOP VISUAL STAGE, STUDIO CONTROLS & CLIP TRIM/SPLIT TOOL ---
+with st.expander("🖥️ Live Preview Stage, Studio Controls & Clip Trim/Split", expanded=True):
     stage_left, stage_right = st.columns([1.2, 1.8])
 
     with stage_left:
         avail_imgs = [p for p in st.session_state.images if os.path.exists(p)]
-        avail_vids = [p for p in st.session_state.scene_videos if os.path.exists(p)] + [
-            p for p in st.session_state.uploaded_video_clips if os.path.exists(p)
-        ]
+        avail_vids = [p for p in st.session_state.scene_videos if os.path.exists(p)]
 
         monitor_mode = st.radio(
             "Preview Mode",
@@ -1219,13 +1424,14 @@ with st.expander("🖥️ Live Preview Stage & Quick Studio Controls", expanded=
             c_idx = min(int(st.session_state.selected_clip_idx), len(avail_imgs) - 1)
             with Image.open(avail_imgs[c_idx]) as im_raw:
                 prev_img = ensure_exact_size(im_raw, width, height, bg_mode=st.session_state.bg_fit_mode)
+            scene_fx_choice = st.session_state.scene_fx_overrides.get(c_idx, st.session_state.editor_video_fx)
             prev_img = apply_pil_effects(
                 prev_img,
                 brightness=st.session_state.editor_brightness,
                 contrast=st.session_state.editor_contrast,
                 saturation=st.session_state.editor_saturation,
                 blur_radius=st.session_state.editor_blur,
-                video_fx=st.session_state.editor_video_fx,
+                video_fx=scene_fx_choice,
             )
             if st.session_state.custom_title_text.strip():
                 prev_img = draw_subtitle_on_frame(
@@ -1237,7 +1443,7 @@ with st.expander("🖥️ Live Preview Stage & Quick Studio Controls", expanded=
                 )
             st.image(
                 prev_img,
-                caption=f"Scene {c_idx + 1} • {width}x{height} • {st.session_state.editor_video_fx}",
+                caption=f"Scene {c_idx + 1} • {width}x{height} • FX: {scene_fx_choice}",
                 use_container_width=True,
             )
         elif monitor_mode == "Rendered Clip" and avail_vids:
@@ -1276,6 +1482,7 @@ with st.expander("🖥️ Live Preview Stage & Quick Studio Controls", expanded=
     with stage_right:
         ctrl_tabs = st.tabs([
             "🎨 Looks & FX",
+            "✂️ Trim & Split Clip",
             "🔊 Nature & Reels SFX",
             "✍️ Text & Fit",
             "📁 Upload Media",
@@ -1310,11 +1517,9 @@ with st.expander("🖥️ Live Preview Stage & Quick Studio Controls", expanded=
             fx1, fx2, fx3 = st.columns(3)
             with fx1:
                 st.session_state.editor_video_fx = st.selectbox(
-                    "Video Effect",
-                    ["None", "Zoom Punch", "Shake", "Flash White", "Glitch RGB", "Vintage Sepia", "Cinematic Vignette"],
-                    index=["None", "Zoom Punch", "Shake", "Flash White", "Glitch RGB", "Vintage Sepia", "Cinematic Vignette"].index(
-                        st.session_state.editor_video_fx
-                    ),
+                    "Global Video Effect",
+                    VIDEO_FX_CHOICES,
+                    index=VIDEO_FX_CHOICES.index(st.session_state.editor_video_fx),
                     key="sel_vfx",
                 )
             with fx2:
@@ -1332,6 +1537,82 @@ with st.expander("🖥️ Live Preview Stage & Quick Studio Controls", expanded=
                 )
 
         with ctrl_tabs[1]:
+            editable_vids = [p for p in st.session_state.scene_videos if os.path.exists(p)]
+            if not editable_vids:
+                st.info("Generate scene videos in Tab 2 or upload video clips in 'Upload Media' to trim or split.")
+            else:
+                clip_labels = [f"Clip {i + 1}: {os.path.basename(p)}" for i, p in enumerate(editable_vids)]
+                target_v_idx = st.selectbox(
+                    "Select Video Clip to Trim or Split",
+                    options=list(range(len(editable_vids))),
+                    format_func=lambda x: clip_labels[x],
+                    index=min(int(st.session_state.selected_clip_idx), len(editable_vids) - 1),
+                    key="trim_split_clip_selector",
+                )
+                target_v_path = editable_vids[target_v_idx]
+                v_dur = max(0.5, round(get_video_duration_safe(target_v_path), 2))
+                st.caption(f"Clip Duration: **{v_dur:.2f}s**")
+
+                trim_c1, trim_c2 = st.columns(2)
+                with trim_c1:
+                    trim_start = st.number_input(
+                        "Trim Start (sec)",
+                        min_value=0.0,
+                        max_value=max(0.1, v_dur - 0.2),
+                        value=0.0,
+                        step=0.1,
+                        key="trim_start_val",
+                    )
+                with trim_c2:
+                    trim_end = st.number_input(
+                        "Trim End (sec)",
+                        min_value=min(v_dur, trim_start + 0.2),
+                        max_value=v_dur,
+                        value=v_dur,
+                        step=0.1,
+                        key="trim_end_val",
+                    )
+
+                act_c1, act_c2 = st.columns(2)
+                with act_c1:
+                    if st.button("✂️ Apply Trim to Clip", key="btn_apply_trim", use_container_width=True):
+                        if trim_end <= trim_start + 0.15:
+                            st.error("Trim End must be at least 0.2s after Trim Start.")
+                        else:
+                            os.makedirs("edited_clips", exist_ok=True)
+                            trimmed_out = os.path.join(
+                                "edited_clips", f"trimmed_{target_v_idx}_{int(time.time())}.mp4"
+                            )
+                            with st.spinner("Trimming video clip..."):
+                                trim_video_clip_file(target_v_path, trimmed_out, trim_start, trim_end)
+                            st.session_state.scene_videos[target_v_idx] = trimmed_out
+                            st.success(f"Trimmed Clip {target_v_idx + 1} to [{trim_start:.1f}s – {trim_end:.1f}s].")
+                            st.rerun()
+
+                with act_c2:
+                    default_split = round(v_dur / 2.0, 2)
+                    split_at = st.number_input(
+                        "Split Point (sec)",
+                        min_value=0.2,
+                        max_value=max(0.3, v_dur - 0.2),
+                        value=max(0.2, min(max(0.3, v_dur - 0.2), default_split)),
+                        step=0.1,
+                        key="split_point_val",
+                    )
+                    if st.button("🔀 Split Clip Into Two", key="btn_apply_split", use_container_width=True):
+                        os.makedirs("edited_clips", exist_ok=True)
+                        ts_now = int(time.time())
+                        pa_path = os.path.join("edited_clips", f"split_{target_v_idx}_A_{ts_now}.mp4")
+                        pb_path = os.path.join("edited_clips", f"split_{target_v_idx}_B_{ts_now}.mp4")
+                        with st.spinner("Splitting clip into two parts..."):
+                            split_video_clip_file(target_v_path, split_at, pa_path, pb_path)
+                        new_list = list(st.session_state.scene_videos)
+                        new_list[target_v_idx : target_v_idx + 1] = [pa_path, pb_path]
+                        st.session_state.scene_videos = new_list
+                        st.success(f"Split Clip {target_v_idx + 1} at {split_at:.1f}s into two clips!")
+                        st.rerun()
+
+        with ctrl_tabs[2]:
             sfx_pick = st.selectbox(
                 "Pick Sound Effect (Nature, Water, Fire, Funny Reels)",
                 list(PRESET_AUDIO_EFFECTS.keys()),
@@ -1360,7 +1641,7 @@ with st.expander("🖥️ Live Preview Stage & Quick Studio Controls", expanded=
                     else:
                         st.error("Could not load that audio sample.")
 
-        with ctrl_tabs[2]:
+        with ctrl_tabs[3]:
             st.session_state.bg_fit_mode = st.selectbox(
                 "Canvas Framing Mode",
                 ["Blur Canvas", "Crop Fill"],
@@ -1386,7 +1667,7 @@ with st.expander("🖥️ Live Preview Stage & Quick Studio Controls", expanded=
                 key="title_overlay_lang",
             )
 
-        with ctrl_tabs[3]:
+        with ctrl_tabs[4]:
             up_v_col, up_a_col = st.columns(2)
             with up_v_col:
                 v_files = st.file_uploader(
@@ -1427,7 +1708,6 @@ with st.expander("🖥️ Live Preview Stage & Quick Studio Controls", expanded=
                     st.success("Background music (BGM) track loaded.")
                     st.rerun()
 
-    # Quick clip selector bar
     clip_pool = st.session_state.scene_videos if st.session_state.scene_videos else st.session_state.images
     if clip_pool:
         st.markdown("**🎞️ Select Clip to Preview**")
@@ -1435,7 +1715,7 @@ with st.expander("🖥️ Live Preview Stage & Quick Studio Controls", expanded=
         for idx_c in range(min(8, len(clip_pool))):
             with c_btns[idx_c]:
                 active_mark = "▶ " if idx_c == st.session_state.selected_clip_idx else ""
-                if st.button(f"{active_mark}Scene {idx_c + 1}", key=f"pick_sc_{idx_c}", use_container_width=True):
+                if st.button(f"{active_mark}Clip {idx_c + 1}", key=f"pick_sc_{idx_c}", use_container_width=True):
                     st.session_state.selected_clip_idx = idx_c
                     st.rerun()
 
@@ -1457,7 +1737,15 @@ with tab1:
     )
     num_scenes = st.slider("Number of Scenes", 2, 10, max(2, min(10, len(st.session_state.scenes) or 6)))
 
-    if st.button("✨ Generate Smart Scenes (AI / Heuristic)", type="primary"):
+    t1_b1, t1_b2, t1_b3 = st.columns(3)
+    with t1_b1:
+        gen_scenes_clicked = st.button("✨ Generate Smart Scenes", type="primary", use_container_width=True)
+    with t1_b2:
+        ai_sug_clicked = st.button("🤖 AI Suggest B-Roll & FX", use_container_width=True)
+    with t1_b3:
+        tr_all_clicked = st.button("🌐 Auto-Translate All to Kannada", use_container_width=True)
+
+    if gen_scenes_clicked:
         if not rough_story.strip():
             st.error("Please enter a story or command first.")
         elif not api_key or not api_key.strip():
@@ -1470,11 +1758,14 @@ with tab1:
                 st.session_state[f"vis_{idx}"] = sc["visual"]
                 st.session_state[f"emo_{idx}"] = sc["emotion"]
                 st.session_state[f"mot_{idx}"] = sc.get("motion", "Auto Alternate")
+                st.session_state[f"broll_{idx}"] = sc.get("suggested_broll", "")
+                st.session_state[f"sfx_sug_{idx}"] = sc.get("suggested_sfx", "None")
+                st.session_state.scene_fx_overrides[idx] = sc.get("suggested_fx", "None")
                 if sc.get("suggested_sfx") and sc["suggested_sfx"] != "None":
                     p_auto_sfx = download_fx_audio(sc["suggested_sfx"], PRESET_AUDIO_EFFECTS.get(sc["suggested_sfx"], ""))
                     if p_auto_sfx:
                         st.session_state.scene_audio_fx[idx] = p_auto_sfx
-            st.success(f"Created {len(st.session_state.scenes)} smart scenes with suggested camera motion & SFX.")
+            st.success(f"Created {len(st.session_state.scenes)} smart scenes with AI B-roll, motion & FX suggestions.")
         else:
             fallback_models = [
                 "gemini-3.8-flash",
@@ -1494,7 +1785,9 @@ with tab1:
             - "narration": clear English voiceover (1-2 sentences)
             - "kannada_narration": natural Kannada voiceover/caption (1-2 sentences)
             - "emotion": mood or expression
-            - "motion": one of ["Zoom In", "Zoom Out", "Pan Right", "Pan Left", "Auto Alternate"]
+            - "motion": one of ["Auto Alternate", "Zoom In", "Zoom Out", "Pan Right", "Pan Left"]
+            - "suggested_broll": 1-line B-roll shot suggestion
+            - "suggested_fx": one of ["None", "Zoom Punch", "Shake", "Flash White", "Glitch RGB", "Vintage Sepia", "Cinematic Vignette"]
             - "visual": scene visual description honoring user commands for character, setting/nature/background, and action
             User command: {rough_story.strip()}
             """
@@ -1528,18 +1821,22 @@ with tab1:
             if parsed_scenes is not None:
                 normalized = []
                 for idx_p, item in enumerate(parsed_scenes[:num_scenes]):
-                    m_sug, fx_sug, sfx_sug = infer_ml_scene_direction(
+                    b_sug, m_sug, fx_sug, sfx_sug = infer_ml_scene_direction(
                         f"{item.get('narration', '')} {item.get('visual', '')}", idx_p
                     )
                     chosen_m = str(item.get("motion", m_sug)).strip()
-                    if chosen_m not in ["Auto Alternate", "Zoom In", "Zoom Out", "Pan Right", "Pan Left"]:
+                    if chosen_m not in MOTION_CHOICES:
                         chosen_m = m_sug
+                    chosen_fx = str(item.get("suggested_fx", fx_sug)).strip()
+                    if chosen_fx not in VIDEO_FX_CHOICES:
+                        chosen_fx = fx_sug
                     normalized.append({
                         "narration": str(item.get("narration", "")).strip(),
                         "kannada_narration": str(item.get("kannada_narration", "")).strip(),
                         "emotion": str(item.get("emotion", "Expressive")).strip(),
                         "motion": chosen_m,
-                        "suggested_fx": fx_sug,
+                        "suggested_broll": str(item.get("suggested_broll", b_sug)).strip(),
+                        "suggested_fx": chosen_fx,
                         "suggested_sfx": sfx_sug,
                         "visual": str(item.get("visual", "")).strip(),
                     })
@@ -1552,6 +1849,9 @@ with tab1:
                     st.session_state[f"vis_{idx}"] = sc["visual"]
                     st.session_state[f"emo_{idx}"] = sc["emotion"]
                     st.session_state[f"mot_{idx}"] = sc.get("motion", "Auto Alternate")
+                    st.session_state[f"broll_{idx}"] = sc.get("suggested_broll", "")
+                    st.session_state[f"sfx_sug_{idx}"] = sc.get("suggested_sfx", "None")
+                    st.session_state.scene_fx_overrides[idx] = sc.get("suggested_fx", "None")
                 st.success(f"Generated {len(st.session_state.scenes)} AI-directed scenes!")
             else:
                 st.session_state.scenes = build_fallback_scenes_from_rough_story(
@@ -1563,47 +1863,79 @@ with tab1:
                     st.session_state[f"vis_{idx}"] = sc["visual"]
                     st.session_state[f"emo_{idx}"] = sc["emotion"]
                     st.session_state[f"mot_{idx}"] = sc.get("motion", "Auto Alternate")
+                    st.session_state[f"broll_{idx}"] = sc.get("suggested_broll", "")
+                    st.session_state[f"sfx_sug_{idx}"] = sc.get("suggested_sfx", "None")
+                    st.session_state.scene_fx_overrides[idx] = sc.get("suggested_fx", "None")
                 st.warning(f"Used smart local scene builder ({last_exc}).")
 
-    if st.session_state.scenes:
-        st.markdown(f"### Scene Script & Direction Cards ({len(st.session_state.scenes)} Scenes)")
-        if st.button("🌐 Auto-Translate All Scenes to Kannada"):
-            if not api_key or not api_key.strip():
-                st.error("Add your Gemini API Key in the sidebar to translate with AI.")
-            else:
-                en_list = [
-                    (st.session_state.get(f"nar_{i}", sc.get("narration", "")) or f"Scene {i + 1}.").strip()
-                    for i, sc in enumerate(st.session_state.scenes)
-                ]
-                with st.spinner("Translating scenes to Kannada..."):
-                    kn_list = translate_lines_to_kannada(api_key, en_list)
-                for i, kn_val in enumerate(kn_list):
-                    st.session_state.scenes[i]["kannada_narration"] = kn_val
-                    st.session_state[f"kn_script_{i}"] = kn_val
-                st.success("Kannada script updated for all scenes.")
-                st.rerun()
+    if ai_sug_clicked:
+        with st.spinner("Analyzing scenes for AI B-roll, camera motion & video FX suggestions..."):
+            suggested_list = ai_suggest_broll_and_fx_for_scenes(api_key, st.session_state.scenes)
+            st.session_state.scenes = suggested_list
+            for idx, sc in enumerate(suggested_list):
+                st.session_state[f"broll_{idx}"] = sc.get("suggested_broll", "")
+                st.session_state[f"mot_{idx}"] = sc.get("motion", "Auto Alternate")
+                st.session_state[f"sfx_sug_{idx}"] = sc.get("suggested_sfx", "None")
+                st.session_state.scene_fx_overrides[idx] = sc.get("suggested_fx", "None")
+                if sc.get("suggested_sfx") and sc["suggested_sfx"] != "None":
+                    p_sfx = download_fx_audio(sc["suggested_sfx"], PRESET_AUDIO_EFFECTS.get(sc["suggested_sfx"], ""))
+                    if p_sfx:
+                        st.session_state.scene_audio_fx[idx] = p_sfx
+        st.success("Applied AI B-roll, motion, video FX & sound FX suggestions across all scenes!")
+        st.rerun()
 
+    if tr_all_clicked:
+        if not api_key or not api_key.strip():
+            st.error("Add your Gemini API Key in the sidebar to translate with AI.")
+        else:
+            en_list = [
+                (st.session_state.get(f"nar_{i}", sc.get("narration", "")) or f"Scene {i + 1}.").strip()
+                for i, sc in enumerate(st.session_state.scenes)
+            ]
+            with st.spinner("Translating scenes to Kannada..."):
+                kn_list = translate_lines_to_kannada(api_key, en_list)
+            for i, kn_val in enumerate(kn_list):
+                st.session_state.scenes[i]["kannada_narration"] = kn_val
+                st.session_state[f"kn_script_{i}"] = kn_val
+            st.success("Kannada script updated for all scenes.")
+            st.rerun()
+
+    if st.session_state.scenes:
+        st.markdown(f"### Scene Script, AI B-Roll & FX Cards ({len(st.session_state.scenes)} Scenes)")
         for i, scene in enumerate(st.session_state.scenes):
             with st.expander(f"Scene {i + 1} • {scene.get('emotion', 'Expressive')}", expanded=(i < 2)):
                 c_left, c_right = st.columns(2)
                 with c_left:
                     nar_v = st.text_area(f"English Narration (Scene {i + 1})", value=scene.get("narration", ""), key=f"nar_{i}")
                     emo_v = st.text_input(f"Mood / Emotion (Scene {i + 1})", value=scene.get("emotion", "Expressive"), key=f"emo_{i}")
+                    mot_cur = st.session_state.get(f"mot_{i}", scene.get("motion", "Auto Alternate"))
                     mot_v = st.selectbox(
                         f"Camera Motion (Scene {i + 1})",
-                        ["Auto Alternate", "Zoom In", "Zoom Out", "Pan Right", "Pan Left"],
-                        index=["Auto Alternate", "Zoom In", "Zoom Out", "Pan Right", "Pan Left"].index(
-                            st.session_state.get(f"mot_{i}", scene.get("motion", "Auto Alternate"))
-                            if st.session_state.get(f"mot_{i}", scene.get("motion", "Auto Alternate")) in ["Auto Alternate", "Zoom In", "Zoom Out", "Pan Right", "Pan Left"]
-                            else "Auto Alternate"
-                        ),
+                        MOTION_CHOICES,
+                        index=MOTION_CHOICES.index(mot_cur) if mot_cur in MOTION_CHOICES else 0,
                         key=f"mot_{i}",
                     )
+                    fx_cur = st.session_state.scene_fx_overrides.get(i, scene.get("suggested_fx", "None"))
+                    fx_v = st.selectbox(
+                        f"Suggested / Active Video FX (Scene {i + 1})",
+                        VIDEO_FX_CHOICES,
+                        index=VIDEO_FX_CHOICES.index(fx_cur) if fx_cur in VIDEO_FX_CHOICES else 0,
+                        key=f"fx_sc_{i}",
+                    )
+                    broll_v = st.text_input(
+                        f"AI B-Roll Shot Suggestion (Scene {i + 1})",
+                        value=scene.get("suggested_broll", ""),
+                        key=f"broll_{i}",
+                    )
                     vis_v = st.text_input(f"Visual / Background / Action Command (Scene {i + 1})", value=scene.get("visual", ""), key=f"vis_{i}")
+
                     scene["narration"] = nar_v
                     scene["emotion"] = emo_v
                     scene["motion"] = mot_v
+                    scene["suggested_fx"] = fx_v
+                    scene["suggested_broll"] = broll_v
                     scene["visual"] = vis_v
+                    st.session_state.scene_fx_overrides[i] = fx_v
                 with c_right:
                     kn_v = st.text_area(
                         f"Kannada Script / Subtitle (Scene {i + 1})",
@@ -1611,6 +1943,7 @@ with tab1:
                         key=f"kn_script_{i}",
                     )
                     scene["kannada_narration"] = kn_v
+                    st.caption(f"Suggested Sound FX: **{scene.get('suggested_sfx', 'None')}**")
 
 # --- TAB 2: SCENE VIDEOS ---
 with tab2:
@@ -1653,6 +1986,7 @@ with tab2:
             sc["visual"] = st.session_state.get(f"vis_{idx}", sc.get("visual", ""))
             sc["emotion"] = st.session_state.get(f"emo_{idx}", sc.get("emotion", "Expressive"))
             sc["motion"] = st.session_state.get(f"mot_{idx}", sc.get("motion", "Auto Alternate"))
+            sc["suggested_broll"] = st.session_state.get(f"broll_{idx}", sc.get("suggested_broll", ""))
 
         st.session_state.scenes = active_scenes
         scene_subtitles = (
@@ -1676,10 +2010,12 @@ with tab2:
 
         prog = st.progress(0)
         for idx, scene in enumerate(active_scenes):
+            broll_note = scene.get("suggested_broll", "")
             full_prompt = (
                 f"{art_style}. {cast_guard} "
                 f"Scene {idx + 1} mood: {scene.get('emotion', 'Expressive')}. "
                 f"Scene {idx + 1} command: {scene.get('visual', '')}. "
+                f"B-roll direction: {broll_note}. "
                 f"Story: {rough_story.strip()}"
             ).strip()
 
@@ -1704,6 +2040,7 @@ with tab2:
                 ensure_exact_size(pil_img, width, height, bg_mode=st.session_state.bg_fit_mode).save(img_path, format="PNG")
                 st.session_state.images.append(img_path)
 
+                sc_fx = st.session_state.scene_fx_overrides.get(idx, st.session_state.editor_video_fx)
                 vid_path = os.path.join("scene_videos", f"scene_{idx}_b{batch_id}.mp4")
                 render_single_scene_video(
                     img_path=img_path,
@@ -1720,7 +2057,7 @@ with tab2:
                     contrast=st.session_state.editor_contrast,
                     saturation=st.session_state.editor_saturation,
                     blur_radius=st.session_state.editor_blur,
-                    video_fx=st.session_state.editor_video_fx,
+                    video_fx=sc_fx,
                     bg_mode=st.session_state.bg_fit_mode,
                 )
                 st.session_state.scene_videos.append(vid_path)
@@ -1733,13 +2070,13 @@ with tab2:
         for idx, vp in enumerate(st.session_state.scene_videos):
             if os.path.exists(vp):
                 with grid_cols[idx % 2]:
-                    st.markdown(f"**Scene {idx + 1} Video**")
+                    st.markdown(f"**Clip {idx + 1} Video** ({get_video_duration_safe(vp):.1f}s)")
                     st.video(vp)
                     with open(vp, "rb") as vf:
                         st.download_button(
-                            label=f"⬇️ Download Scene {idx + 1}",
+                            label=f"⬇️ Download Clip {idx + 1}",
                             data=vf.read(),
-                            file_name=f"scene_{idx + 1}.mp4",
+                            file_name=f"clip_{idx + 1}.mp4",
                             mime="video/mp4",
                             key=f"dl_v_{idx}_b{st.session_state.gen_batch_id}",
                         )
@@ -1804,7 +2141,7 @@ with tab4:
     with exp2:
         final_motion_mode = st.selectbox(
             "Fallback Motion Mode",
-            ["Auto Alternate", "Zoom In", "Zoom Out", "Pan Right", "Pan Left"],
+            MOTION_CHOICES,
             key="final_mot_box",
         )
 
@@ -1881,6 +2218,7 @@ with tab4:
                                 if i < len(st.session_state.scenes)
                                 else final_motion_mode
                             )
+                            sc_fx = st.session_state.scene_fx_overrides.get(i, st.session_state.editor_video_fx)
                             c_item = build_motion_clip(
                                 img_path=st.session_state.images[i],
                                 target_w=width,
@@ -1895,7 +2233,7 @@ with tab4:
                                 contrast=st.session_state.editor_contrast,
                                 saturation=st.session_state.editor_saturation,
                                 blur_radius=st.session_state.editor_blur,
-                                video_fx=st.session_state.editor_video_fx,
+                                video_fx=sc_fx,
                                 bg_mode=st.session_state.bg_fit_mode,
                             )
 
