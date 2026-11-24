@@ -65,16 +65,38 @@ def apply_audio(clip, audio):
 
 
 def _find_font(font_size, lang="English"):
-    """Load a suitable TrueType font for English or Kannada if available."""
+    """Load a suitable TrueType font for English or Kannada, fetching Noto Sans Kannada if needed."""
     candidates = []
     if lang == "Kannada":
         candidates.extend([
+            "NotoSansKannada-Regular.ttf",
+            "NotoSansKannada-Bold.ttf",
+            "/tmp/NotoSansKannada-Regular.ttf",
             "/usr/share/fonts/truetype/noto/NotoSansKannada-Regular.ttf",
             "/usr/share/fonts/truetype/noto/NotoSansKannada-Bold.ttf",
-            "NotoSansKannada-Regular.ttf",
-            "Nirmala.ttf",
-            "nirmala.ttf",
         ])
+        for path in candidates:
+            if os.path.exists(path):
+                try:
+                    return ImageFont.truetype(path, font_size)
+                except Exception:
+                    pass
+
+        tmp_font = "/tmp/NotoSansKannada-Regular.ttf"
+        font_urls = [
+            "https://raw.githubusercontent.com/google/fonts/main/ofl/notosanskannada/static/NotoSansKannada-Regular.ttf",
+            "https://raw.githubusercontent.com/notofonts/kannada/main/hinted/ttf/NotoSansKannada-Regular.ttf",
+        ]
+        for url in font_urls:
+            try:
+                r = requests.get(url, timeout=20)
+                if r.ok and len(r.content) > 10000:
+                    with open(tmp_font, "wb") as f:
+                        f.write(r.content)
+                    return ImageFont.truetype(tmp_font, font_size)
+            except Exception:
+                continue
+
     candidates.extend([
         "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
         "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
@@ -694,7 +716,6 @@ with tab3:
 
                 scene_total = max(len(st.session_state.scenes), len(st.session_state.images), 1)
                 if len(saved_paths) == 1 and scene_total > 1:
-                    # Split or assign the single uploaded voice clip across scenes evenly
                     full_clip = AudioFileClip(saved_paths[0])
                     try:
                         total_dur = max(float(full_clip.duration or 4.0), 1.0)
