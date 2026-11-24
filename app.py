@@ -19,10 +19,10 @@ from huggingface_hub import InferenceClient
 from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageFont
 
 try:
-    from moviepy.editor import AudioFileClip, ImageClip, concatenate_videoclips
+    from moviepy.editor import AudioFileClip, ImageClip, VideoFileClip, concatenate_videoclips
     MOVIEPY_V2 = False
 except ModuleNotFoundError:
-    from moviepy import AudioFileClip, ImageClip, concatenate_videoclips
+    from moviepy import AudioFileClip, ImageClip, VideoFileClip, concatenate_videoclips
     MOVIEPY_V2 = True
 
 st.set_page_config(
@@ -79,6 +79,8 @@ DEFAULT_CORPORATE_SCENES = [
 for key, default in [
     ("scenes", [dict(s) for s in DEFAULT_CORPORATE_SCENES]),
     ("images", []),
+    ("scene_videos", []),
+    ("tab2_baked_subtitles", False),
     ("audio_files", []),
     ("custom_audio_paths", []),
     ("own_voice_table", {}),
@@ -519,6 +521,50 @@ def build_motion_clip(
     return concatenate_videoclips(subclips, method="chain")
 
 
+def render_single_scene_video(
+    img_path,
+    out_path,
+    target_w,
+    target_h,
+    duration=4.0,
+    motion_mode="Auto Alternate",
+    scene_idx=0,
+    subtitle_text="",
+    subtitle_lang="None",
+    audio_path=None,
+    enable_lipsync=True,
+    enable_char_motion=True,
+):
+    """Render and save a standalone MP4 video clip for a single scene."""
+    clip = build_motion_clip(
+        img_path=img_path,
+        target_w=target_w,
+        target_h=target_h,
+        duration=duration,
+        motion_mode=motion_mode,
+        scene_idx=scene_idx,
+        subtitle_text=subtitle_text,
+        subtitle_lang=subtitle_lang,
+        audio_path=audio_path,
+        enable_lipsync=enable_lipsync,
+        enable_char_motion=enable_char_motion,
+    )
+    try:
+        clip.write_videofile(
+            out_path,
+            fps=24,
+            codec="libx264",
+            audio=False,
+            logger=None,
+        )
+        return out_path
+    finally:
+        try:
+            clip.close()
+        except Exception:
+            pass
+
+
 def build_local_bypass_scene(prompt_text, target_w, target_h, scene_idx, emotion_label=""):
     """Distinct corporate scene storyboard frame when external AI image APIs fail/quota-out."""
     palettes = [
@@ -869,7 +915,7 @@ def generate_real_ai_scene(
 
 st.title("🎬 AI Animated Story Studio")
 st.caption(
-    "Up to 10 scenes, multi-engine AI scene failover, local bypass fallback, locked character identity, interactive English & Kannada story editor, voiceovers, lip-sync, and exact-size MP4 export."
+    "Up to 10 scenes, multi-engine AI scene failover, local bypass fallback, locked character identity, interactive English & Kannada story editor, per-scene video creation with subtitles & lip-sync, voiceovers, and exact-size MP4 export."
 )
 
 with st.sidebar:
@@ -913,7 +959,7 @@ with st.sidebar:
 
 tab1, tab2, tab3, tab4 = st.tabs([
     "1️⃣ Rough Story & Editor",
-    "2️⃣ Characters & Scenes",
+    "2️⃣ Scene Videos",
     "3️⃣ Voice & Sound",
     "4️⃣ Render & Download",
 ])
@@ -1096,9 +1142,9 @@ with tab1:
                                 st.session_state.kannada_subtitles[i] = kn_one
                                 st.rerun()
 
-# --- TAB 2: CHARACTER REFERENCE & REALISTIC AI SCENES ---
+# --- TAB 2: SCENE-WISE VIDEO CREATOR (WITH SUBTITLES & LIP-SYNC) ---
 with tab2:
-    st.subheader("Character Reference Upload & Scene Generation")
+    st.subheader("Create Scene-by-Scene Videos (Subtitles & Lip-Sync)")
     art_style = st.selectbox(
         "Choose Visual Style",
         [
@@ -1123,38 +1169,82 @@ with tab2:
             type=["png", "jpg", "jpeg", "webp"],
         )
 
-    bypass_col1, bypass_col2 = st.columns([1.4, 1.6])
-    with bypass_col1:
+    vid_opt1, vid_opt2, vid_opt3 = st.columns([1.1, 1.1, 1.4])
+    with vid_opt1:
         scene_count_slider = st.slider(
             "Number of Scenes (2 to 10)",
             2,
             10,
             max(2, min(10, len(st.session_state.scenes) or 6)),
         )
-    with bypass_col2:
+    with vid_opt2:
+        per_scene_sec = st.slider("Default Clip Length (sec)", 2.0, 10.0, 4.0, 0.5)
+    with vid_opt3:
+        scene_motion_mode = st.selectbox(
+            "Scene Motion Style",
+            ["Auto Alternate", "Zoom In", "Zoom Out", "Pan Right", "Pan Left"],
+        )
+
+    sub_lip_col1, sub_lip_col2, sub_lip_col3 = st.columns([1.2, 1.1, 1.7])
+    with sub_lip_col1:
+        tab2_sub_lang = st.selectbox(
+            "Scene Video Subtitles",
+            ["None", "English", "Kannada"],
+            index=2,
+            key="tab2_subtitle_lang",
+        )
+    with sub_lip_col2:
+        tab2_lipsync = st.checkbox(
+            "Scene Lip-Sync Cadence",
+            value=True,
+            key="tab2_enable_lipsync",
+        )
+    with sub_lip_col3:
         allow_local_bypass = st.checkbox(
             "Enable zero-API local bypass frames if all external image APIs fail/quota-out",
             value=True,
         )
+
+    st.session_state["tab2_baked_subtitles"] = tab2_sub_lang != "None"
 
     ref_pil = None
     if ref_file is not None:
         ref_pil = Image.open(ref_file).convert("RGB")
         st.image(ref_pil, caption="Uploaded Character Reference Image", width=260)
 
-    if st.button("🎨 Generate Scene Artwork", type="primary"):
+    if st.button("🎬 Generate Scene Videos", type="primary"):
         active_scenes = sync_scenes_to_count(
             st.session_state.scenes,
             scene_count_slider,
             rough_story,
             st.session_state.locked_character_prompt,
         )
+        for idx, sc in enumerate(active_scenes):
+            if f"nar_{idx}" in st.session_state:
+                sc["narration"] = st.session_state[f"nar_{idx}"]
+            if f"kn_script_{idx}" in st.session_state:
+                sc["kannada_narration"] = st.session_state[f"kn_script_{idx}"]
+            if f"vis_{idx}" in st.session_state:
+                sc["visual"] = st.session_state[f"vis_{idx}"]
+            if f"emo_{idx}" in st.session_state:
+                sc["emotion"] = st.session_state[f"emo_{idx}"]
+
         st.session_state.scenes = active_scenes
         for idx, sc in enumerate(st.session_state.scenes):
             st.session_state.setdefault(f"nar_{idx}", sc.get("narration", ""))
             st.session_state.setdefault(f"kn_script_{idx}", sc.get("kannada_narration", ""))
             st.session_state.setdefault(f"vis_{idx}", sc.get("visual", ""))
             st.session_state.setdefault(f"emo_{idx}", sc.get("emotion", "Dense Emotion"))
+
+        scene_subtitles = (
+            get_script_lines_for_language(
+                st.session_state.scenes,
+                script_lang=tab2_sub_lang,
+                gemini_key=api_key,
+            )
+            if tab2_sub_lang != "None"
+            else [""] * len(st.session_state.scenes)
+        )
 
         st.session_state.gen_batch_id += 1
         batch_id = st.session_state.gen_batch_id
@@ -1172,6 +1262,8 @@ with tab2:
         )
 
         st.session_state.images = []
+        st.session_state.scene_videos = []
+        os.makedirs("scene_videos", exist_ok=True)
         progress = st.progress(0)
         used_sources = []
         all_errors = []
@@ -1213,15 +1305,48 @@ with tab2:
                 st.session_state.images.append(img_path)
                 used_sources.append(src_name or "AI")
 
+                scene_aud = (
+                    st.session_state.audio_files[idx]
+                    if idx < len(st.session_state.audio_files)
+                    else None
+                )
+                clip_dur = per_scene_sec
+                if scene_aud and os.path.exists(scene_aud):
+                    try:
+                        ac = AudioFileClip(scene_aud)
+                        clip_dur = max(float(ac.duration or per_scene_sec) + 0.3, 1.0)
+                        ac.close()
+                    except Exception:
+                        pass
+
+                sub_line = scene_subtitles[idx] if idx < len(scene_subtitles) else ""
+                vid_path = os.path.join("scene_videos", f"scene_{idx}_b{batch_id}.mp4")
+                render_single_scene_video(
+                    img_path=img_path,
+                    out_path=vid_path,
+                    target_w=width,
+                    target_h=height,
+                    duration=clip_dur,
+                    motion_mode=scene_motion_mode,
+                    scene_idx=idx,
+                    subtitle_text=sub_line,
+                    subtitle_lang=tab2_sub_lang,
+                    audio_path=scene_aud,
+                    enable_lipsync=tab2_lipsync,
+                    enable_char_motion=True,
+                )
+                st.session_state.scene_videos.append(vid_path)
+
             progress.progress((idx + 1) / len(active_scenes))
 
-        if st.session_state.images:
+        if st.session_state.scene_videos:
             st.success(
-                f"Generated {len(st.session_state.images)} distinct scenes at exact {width}x{height} ({', '.join(set(used_sources))})."
+                f"Created {len(st.session_state.scene_videos)} scene videos at {width}x{height} "
+                f"(Subtitles: {tab2_sub_lang}, Lip-Sync: {'On' if tab2_lipsync else 'Off'}, Sources: {', '.join(set(used_sources))})."
             )
         else:
             st.error(
-                "No scene image was generated across any engine. Enable local bypass or inspect API / Quota Details below."
+                "No scene videos were created. Enable local bypass or inspect API / Quota Details below."
             )
 
         if all_errors:
@@ -1229,13 +1354,31 @@ with tab2:
                 for err in all_errors:
                     st.write(err)
 
-    if st.session_state.images:
+    if st.session_state.scene_videos:
         cols = st.columns(2)
-        for idx, img_path in enumerate(st.session_state.images):
-            if os.path.exists(img_path):
-                emo_cap = st.session_state.scenes[idx].get("emotion", "") if idx < len(st.session_state.scenes) else ""
-                cap_txt = f"Scene {idx + 1} • {emo_cap} ({width}x{height})" if emo_cap else f"Scene {idx + 1} ({width}x{height})"
-                cols[idx % 2].image(img_path, caption=cap_txt, use_container_width=True)
+        for idx, vid_path in enumerate(st.session_state.scene_videos):
+            if os.path.exists(vid_path):
+                emo_cap = (
+                    st.session_state.scenes[idx].get("emotion", "")
+                    if idx < len(st.session_state.scenes)
+                    else ""
+                )
+                cap_txt = (
+                    f"Scene {idx + 1} • {emo_cap} ({width}x{height})"
+                    if emo_cap
+                    else f"Scene {idx + 1} ({width}x{height})"
+                )
+                with cols[idx % 2]:
+                    st.markdown(f"**{cap_txt}**")
+                    st.video(vid_path)
+                    with open(vid_path, "rb") as vf:
+                        st.download_button(
+                            label=f"⬇️ Scene {idx + 1} Video",
+                            data=vf.read(),
+                            file_name=f"scene_{idx + 1}.mp4",
+                            mime="video/mp4",
+                            key=f"dl_scene_vid_{idx}_b{st.session_state.gen_batch_id}",
+                        )
 
 # --- TAB 3: VOICE & SOUND ---
 with tab3:
@@ -1353,7 +1496,7 @@ with tab3:
                         f.write(up_file.getbuffer())
                     saved_paths.append(out_p)
 
-                scene_total = max(len(st.session_state.scenes), len(st.session_state.images), 1)
+                scene_total = max(len(st.session_state.scenes), len(st.session_state.images), len(st.session_state.scene_videos), 1)
                 if len(saved_paths) == 1 and scene_total > 1:
                     full_clip = AudioFileClip(saved_paths[0])
                     try:
@@ -1390,7 +1533,13 @@ with tab3:
         f"Currently showing **{selected_script_lang}** script lines to read. Record with your microphone (or upload a clip per row), preview it, and click Save My Voice Table."
     )
 
-    table_count = max(len(active_script_lines), len(st.session_state.scenes), len(st.session_state.images), 2)
+    table_count = max(
+        len(active_script_lines),
+        len(st.session_state.scenes),
+        len(st.session_state.images),
+        len(st.session_state.scene_videos),
+        2,
+    )
     os.makedirs("own_voice_table", exist_ok=True)
     draft_rows = []
 
@@ -1496,21 +1645,23 @@ with tab4:
 
     _, active_font_source = _find_font(28, lang=subtitle_lang if subtitle_lang != "None" else "English")
     st.caption(
-        f"Target output size: `{width}x{height}` ({ratio_str}) | Scenes ready: `{len(st.session_state.images)}` | Active font: `{active_font_source}`"
+        f"Target output size: `{width}x{height}` ({ratio_str}) | Scene Videos ready: `{len(st.session_state.scene_videos)}` | Scene Images ready: `{len(st.session_state.images)}` | Active font: `{active_font_source}`"
     )
 
     if st.button("🎬 Render Final MP4 Video", type="primary"):
-        if not st.session_state.images or not st.session_state.audio_files:
-            st.error("Make sure both Scene Artwork (Tab 2) and Narration (Tab 3) are generated or saved.")
+        has_visuals = bool(st.session_state.scene_videos or st.session_state.images)
+        if not has_visuals or not st.session_state.audio_files:
+            st.error("Make sure both Scene Videos (Tab 2) and Narration (Tab 3) are generated or saved.")
         else:
             clips = []
             audio_clips = []
+            source_video_clips = []
             final_video = None
             output_file = f"animated_story_b{st.session_state.gen_batch_id}.mp4"
 
             try:
                 with st.spinner(
-                    f"Rendering {len(st.session_state.images)}-scene {width}x{height} video with locked characters, lip-sync cadence, and {subtitle_lang} subtitles..."
+                    f"Stitching {max(len(st.session_state.scene_videos), len(st.session_state.images))}-scene {width}x{height} video with voiceovers and {subtitle_lang} subtitles..."
                 ):
                     if subtitle_lang == "Kannada":
                         sub_lines = get_script_lines_for_language(
@@ -1530,26 +1681,36 @@ with tab4:
                     while len(sub_lines) < len(st.session_state.audio_files):
                         sub_lines.append("")
 
+                    scene_total = max(len(st.session_state.scene_videos), len(st.session_state.images))
                     for i, aud_p in enumerate(st.session_state.audio_files):
-                        if i >= len(st.session_state.images):
+                        if i >= scene_total:
                             break
                         audio_clip = AudioFileClip(aud_p)
                         audio_clips.append(audio_clip)
-                        target_duration = max(audio_clip.duration + 0.3, 1.0)
+                        target_duration = max(float(audio_clip.duration or 1.0) + 0.3, 1.0)
 
-                        motion_clip = build_motion_clip(
-                            st.session_state.images[i],
-                            width,
-                            height,
-                            target_duration,
-                            motion_mode=free_motion_style,
-                            scene_idx=i,
-                            subtitle_text=sub_lines[i] if i < len(sub_lines) else "",
-                            subtitle_lang=subtitle_lang,
-                            audio_path=aud_p,
-                            enable_lipsync=enable_lipsync,
-                            enable_char_motion=enable_char_motion,
-                        )
+                        if i < len(st.session_state.scene_videos) and os.path.exists(st.session_state.scene_videos[i]):
+                            src_vid = VideoFileClip(st.session_state.scene_videos[i])
+                            source_video_clips.append(src_vid)
+                            if (src_vid.duration or 0) < target_duration and hasattr(src_vid, "loop"):
+                                motion_clip = apply_duration(src_vid.loop(duration=target_duration), target_duration)
+                            else:
+                                motion_clip = apply_duration(src_vid, target_duration)
+                        else:
+                            motion_clip = build_motion_clip(
+                                st.session_state.images[i],
+                                width,
+                                height,
+                                target_duration,
+                                motion_mode=free_motion_style,
+                                scene_idx=i,
+                                subtitle_text=sub_lines[i] if i < len(sub_lines) else "",
+                                subtitle_lang=subtitle_lang,
+                                audio_path=aud_p,
+                                enable_lipsync=enable_lipsync,
+                                enable_char_motion=enable_char_motion,
+                            )
+
                         scene_clip = apply_audio(motion_clip, audio_clip)
                         clips.append(scene_clip)
 
@@ -1576,6 +1737,11 @@ with tab4:
                 for c in clips:
                     try:
                         c.close()
+                    except Exception:
+                        pass
+                for sv in source_video_clips:
+                    try:
+                        sv.close()
                     except Exception:
                         pass
                 for a in audio_clips:
