@@ -16,13 +16,12 @@ import streamlit as st
 from google import genai
 from google.genai import types
 from huggingface_hub import InferenceClient
-from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageFont
+from PIL import Image, ImageDraw, ImageFont
 
 try:
     from moviepy.editor import (
         AudioFileClip,
         CompositeAudioClip,
-        ImageClip,
         VideoFileClip,
         concatenate_videoclips,
     )
@@ -33,7 +32,6 @@ except ModuleNotFoundError:
     from moviepy import (
         AudioFileClip,
         CompositeAudioClip,
-        ImageClip,
         VideoFileClip,
         concatenate_videoclips,
     )
@@ -41,9 +39,8 @@ except ModuleNotFoundError:
 
     MOVIEPY_V2 = True
 
-
 st.set_page_config(
-    page_title="Free AI 2D Reels & Story Studio",
+    page_title="All-in-One AI Reels Studio (Free Edition)",
     page_icon="🎬",
     layout="wide",
 )
@@ -51,97 +48,154 @@ st.set_page_config(
 st.markdown(
     """
     <style>
-    html, body, [class*="css"] { font-size: 15px; }
     .stApp { background-color: #0b0f17; color: #f0f6fc; }
     .studio-header {
-        display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between;
-        gap: 10px; background: linear-gradient(90deg, #131926 0%, #1d263b 100%);
+        background: linear-gradient(90deg, #131926 0%, #1d263b 100%);
         border: 1px solid #30363d; border-radius: 14px; padding: 14px 18px; margin-bottom: 14px;
     }
     .studio-pill {
-        background: linear-gradient(90deg, #ff2e63, #ff6b35); color: #ffffff;
+        background: linear-gradient(90deg, #ff2e63, #ff6b35); color: #fff;
         font-weight: 700; font-size: 12px; padding: 4px 12px; border-radius: 999px;
     }
-    .studio-sub { color: #9da7b3; font-size: 13px; }
-    .stButton > button { border-radius: 10px; padding: 0.55rem 0.95rem; font-weight: 600; min-height: 42px; }
+    .stButton > button { border-radius: 10px; font-weight: 600; min-height: 42px; }
     </style>
     """,
     unsafe_allow_html=True,
 )
 
-# --- PRESETS & CONSTANTS ---
-FORMAT_PRESETS = {
-    "9:16 Reels / Shorts": (720, 1280, "9:16"),
-    "4:5 Portrait Feed": (864, 1080, "4:5"),
-    "1:1 Square Post": (1080, 1080, "1:1"),
-    "16:9 YouTube / Story": (1280, 720, "16:9"),
+# --- PRESETS MATCHING ALL 4 STYLES IN YOUR VIDEO ---
+REEL_TEMPLATES = {
+    "1. @wealth Style (2D Illustrated Couple + Top Hook Banner)": {
+        "style_prompt": (
+            "Warm modern 2D animated illustration style, expressive cartoon characters with clean dark outlines, "
+            "soft golden ambient lighting, cozy expressive faces, clean digital art, no text"
+        ),
+        "layout_mode": "Black Canvas + Top Hook",
+        "banner_bg": (0, 0, 0, 255),
+        "banner_text_color": (255, 255, 255, 255),
+        "highlight_color": (255, 222, 89, 255),
+        "hook_l1": "Keep Your Blessings Quiet",
+        "hook_l2": "Until They're Permanent",
+        "highlights": "Quiet, Permanent",
+        "char_lock": "Young man with short dark hair and young woman with messy bun, cozy casual clothes, consistent faces",
+        "scenes": [
+            {
+                "narration": "The happiest people aren't the ones posting every single win online.",
+                "kannada_narration": "ತಮ್ಮ ಪ್ರತಿಯೊಂದು ಗೆಲುವನ್ನೂ ಪೋಸ್ಟ್ ಮಾಡುವವರು ಅತ್ಯಂತ ಸಂತೋಷವಾಗಿರುವುದಿಲ್ಲ.",
+                "visual": "Young couple counting stacks of cash together at a wooden table under a warm lamp, happy smiles",
+                "motion": "Zoom In",
+            },
+            {
+                "narration": "Protect your privacy and keep your plans quiet while you build.",
+                "kannada_narration": "ನಿಮ್ಮ ಯೋಜನೆಗಳನ್ನು ಗುಟ್ಟಾಗಿಡಿ ಮತ್ತು ಮೌನವಾಗಿ ಬೆಳೆಯಿರಿ.",
+                "visual": "Young woman and young man playfully holding tape over their mouths with knowing smiles",
+                "motion": "Pan Right",
+            },
+            {
+                "narration": "Celebrate silently first, and share only when your blessings are permanent.",
+                "kannada_narration": "ಮೊದಲು ಮೌನವಾಗಿ ಸಂಭ್ರಮಿಸಿ, ನಿಮ್ಮ ಸಂತೋಷ ಶಾಶ್ವತವಾದಾಗ ಹಂಚಿಕೊಳ್ಳಿ.",
+                "visual": "Young couple standing in a bright sunlit apartment holding up house keys happily",
+                "motion": "Zoom Out",
+            },
+        ],
+    },
+    "2. @cartoonfun.world Style (2D Comedy Cartoon + Green Banner)": {
+        "style_prompt": (
+            "Clean 2D flat vector cartoon animation style, bold outlines, bright daytime outdoor background, "
+            "expressive funny character faces, vivid colors, no text"
+        ),
+        "layout_mode": "Color Banner + Center Frame",
+        "banner_bg": (34, 197, 94, 255),
+        "banner_text_color": (255, 255, 255, 255),
+        "highlight_color": (254, 240, 138, 255),
+        "hook_l1": "ಮೆಡಿಕಲ್ ಗೆ ಹೋಗ್ಬೇಕು.... 😂🤣",
+        "hook_l2": "",
+        "highlights": "",
+        "char_lock": "Funny 2D cartoon young man wearing purple shirt and yellow pants riding a green scooter, consistent face",
+        "scenes": [
+            {
+                "narration": "When you tell your friend you are just going to the medical store!",
+                "kannada_narration": "ಯಾರೋ ನಿನ್ನ ಹತ್ರ ರಿಕ್ವೆಸ್ಟ್ ಮಾಡ್ತಾ ಇದ್ದಾರೆ, ಇಂಟರ್ನೆಟ್ ಮೇಲೆ ವೈರಲ್ ಆಗಿದ್ದೀಯಾ!",
+                "visual": "2D cartoon man riding a green scooter on a village road with green trees and hills behind",
+                "motion": "Pan Right",
+            },
+            {
+                "narration": "And suddenly the whole internet is watching your trip!",
+                "kannada_narration": "ಅಲ್ಲ ಅದು ಒಂದು ವಿಡಿಯೋ ಇದೆ ಅಲ್ವಾ, ಮತ್ತೆ ಇದು ಒರಿಜಿನಲ್ ಅಲ್ವಾ!",
+                "visual": "Close up of 2D cartoon man on green scooter looking surprised and laughing with wide eyes",
+                "motion": "Zoom In",
+            },
+        ],
+    },
+    "3. @neuronvisuals Style (Minimalist 3D Stick-Figure Explainer)": {
+        "style_prompt": (
+            "Minimalist 3D dark-mode infographic animation style, smooth white 3D mannequin character on dark charcoal "
+            "background, glowing green progress counters and dramatic spotlight lighting, no text"
+        ),
+        "layout_mode": "Full Screen 9:16",
+        "banner_bg": (0, 0, 0, 0),
+        "banner_text_color": (255, 255, 255, 255),
+        "highlight_color": (74, 222, 128, 255),
+        "hook_l1": "1 INCOME vs SMART INCOME",
+        "hook_l2": "",
+        "highlights": "SMART",
+        "char_lock": "Smooth white minimalist 3D stick figure mannequin in a dark moody studio with glowing green buckets",
+        "scenes": [
+            {
+                "narration": "When you rely on a single paycheck, your income stops the moment you stop working.",
+                "kannada_narration": "ನೀವು ಒಂದೇ ಆದಾಯವನ್ನು ಅವಲಂಬಿಸಿದಾಗ, ಕೆಲಸ ನಿಲ್ಲಿಸಿದ ತಕ್ಷಣ ಆದಾಯವೂ ನಿಲ್ಲುತ್ತದೆ.",
+                "visual": "Minimalist white 3D mannequin standing under dark vertical bars dropping coins into a glowing green bucket",
+                "motion": "Zoom In",
+            },
+            {
+                "narration": "Build systems that keep growing even while you rest.",
+                "kannada_narration": "ನೀವು ವಿಶ್ರಾಂತಿ ಪಡೆಯುವಾಗಲೂ ಬೆಳೆಯುವ ವ್ಯವಸ್ಥೆಯನ್ನು ನಿರ್ಮಿಸಿ.",
+                "visual": "Minimalist white 3D mannequin relaxing on a chair while glowing green coins multiply in the bucket",
+                "motion": "Zoom Out",
+            },
+        ],
+    },
+    "4. @_aivision_studios_ Style (3D Pixar Mythological & Talking Animals)": {
+        "style_prompt": (
+            "3D Pixar and DreamWorks animated movie style, rich cinematic lighting, expressive 3D character faces, "
+            "detailed textures, vibrant colors, 8k render, no text"
+        ),
+        "layout_mode": "Full Screen 9:16",
+        "banner_bg": (0, 0, 0, 0),
+        "banner_text_color": (255, 255, 255, 255),
+        "highlight_color": (255, 222, 89, 255),
+        "hook_l1": "",
+        "hook_l2": "",
+        "highlights": "",
+        "char_lock": "3D Pixar-style blue-skinned Lord Yama with golden crown, mustache, and ornate jewelry",
+        "scenes": [
+            {
+                "narration": "Who dares summon Yama Dharma Raja in the middle of the night?",
+                "kannada_narration": "ಯಾರೋ ನಿನ್ನ ಹತ್ರ ರಿಕ್ವೆಸ್ಟ್ ಮಾಡ್ತಾ ಇರೋದು! ಧರ್ಮ ಯಮ ಧರ್ಮ!",
+                "visual": "3D Pixar-style Lord Yama with golden crown and blue skin looking sternly at night with glowing stars",
+                "motion": "Zoom In",
+            },
+            {
+                "narration": "Even the little green snake on the village cot has something to say!",
+                "kannada_narration": "ಯಾವುದು ಇದು ಕರ್ಮ! ಓ ನೀನು ನಿನ್ನ ತಗೊಂಡು ಹೋಗ್ತೀಯಾ!",
+                "visual": "Cute expressive 3D Pixar-style green cartoon snake sitting on a woven village cot with checkered pillows",
+                "motion": "Zoom Out",
+            },
+        ],
+    },
 }
-
-ANIMATION_STYLES = {
-    "2D Warm Illustrated Reel (Like Screenshots)": (
-        "Warm modern 2D animated illustration style, expressive cartoon characters with clean dark outlines, "
-        "soft golden ambient lighting, cozy expressive faces, clean digital art, no text"
-    ),
-    "3D Pixar / Disney Feature Film": (
-        "3D animated feature film style like Pixar and DreamWorks, expressive faces, "
-        "volumetric global illumination, rich textures, dynamic camera, no text"
-    ),
-    "High-Budget Anime": (
-        "High-budget theatrical anime animation, vibrant glowing highlights, expressive character acting, "
-        "detailed painted backgrounds, dramatic sky, no text"
-    ),
-}
-
-MOTION_CHOICES = ["Auto Alternate", "Zoom In", "Zoom Out", "Pan Right", "Pan Left"]
-ANIMATION_FPS = 24
 
 TTS_VOICES = {
-    "English (Male - Warm Storyteller)": "en-US-ChristopherNeural",
-    "English (Female - Warm Narrator)": "en-US-AriaNeural",
-    "English (Male - Calm Guy)": "en-US-GuyNeural",
-    "English India (Male - Prabhat)": "en-IN-PrabhatNeural",
-    "English India (Female - Neerja)": "en-IN-NeerjaNeural",
     "Kannada (Male - Gagan)": "kn-IN-GaganNeural",
     "Kannada (Female - Sapna)": "kn-IN-SapnaNeural",
+    "English (Male - Epic Storyteller)": "en-US-ChristopherNeural",
+    "English (Female - Warm Narrator)": "en-US-AriaNeural",
+    "English India (Male - Prabhat)": "en-IN-PrabhatNeural",
     "Hindi (Male - Madhur)": "hi-IN-MadhurNeural",
-    "Hindi (Female - Swara)": "hi-IN-SwaraNeural",
 }
 
-DEFAULT_CHAR_PROMPT = (
-    "A young man with short dark hair and warm smile and a young woman with dark hair in a messy bun, "
-    "wearing casual cozy clothes, consistent character faces and outfits across every scene"
-)
-
-DEFAULT_SCENES = [
-    {
-        "narration": "The happiest people aren't the ones posting every single win the moment it happens.",
-        "kannada_narration": "ತಮ್ಮ ಪ್ರತಿಯೊಂದು ಸಂತೋಷವನ್ನೂ ತಕ್ಷಣ ಪೋಸ್ಟ್ ಮಾಡುವವರು ಅತ್ಯಂತ ಸಂತೋಷವಾಗಿರುವುದಿಲ್ಲ.",
-        "motion": "Zoom In",
-        "action_motion": "Gentle warm hug, soft breathing and subtle smile, slow cinematic push-in",
-        "visual": "Young couple hugging warmly on a bed in soft golden morning light, peaceful happy expressions",
-    },
-    {
-        "narration": "Protect your peace and let your growth speak quietly before you share it with the world.",
-        "kannada_narration": "ನಿಮ್ಮ ಶಾಂತಿಯನ್ನು ಕಾಪಾಡಿಕೊಳ್ಳಿ, ಜಗತ್ತಿಗೆ ಹೇಳುವ ಮೊದಲು ನಿಮ್ಮ ಬೆಳವಣಿಗೆ ಬೆಳೆಯಲು ಬಿಡಿ.",
-        "motion": "Pan Right",
-        "action_motion": "Playful expression, gentle head tilt and warm smile, smooth pan across room",
-        "visual": "Close-up of the young man smiling warmly with soft golden rim light and cozy background",
-    },
-    {
-        "narration": "Not everyone around you wants to see you win, so keep your plans private.",
-        "kannada_narration": "ನಿಮ್ಮ ಗೆಲುವನ್ನು ನೋಡಲು ಎಲ್ಲರೂ ಬಯಸುವುದಿಲ್ಲ, ಆದ್ದರಿಂದ ನಿಮ್ಮ ಯೋಜನೆಗಳನ್ನು ಗುಟ್ಟಾಗಿಡಿ.",
-        "motion": "Zoom Out",
-        "action_motion": "Playful light-hearted moment, subtle eye movement and warm expressions",
-        "visual": "Young woman and young man playfully holding tape over their mouths in a bright room, warm 2D illustration",
-    },
-    {
-        "narration": "Celebrate silently first, and share when your blessings are truly permanent.",
-        "kannada_narration": "ಮೊದಲು ಮೌನವಾಗಿ ಸಂಭ್ರಮಿಸಿ, ನಿಮ್ಮ ಸಂತೋಷ ಶಾಶ್ವತವಾದಾಗ ಹಂಚಿಕೊಳ್ಳಿ.",
-        "motion": "Pan Left",
-        "action_motion": "Joyful smile holding house keys up gently, bright natural window light",
-        "visual": "Young couple standing together in a bright sunlit apartment with large windows, man holding keys smiling",
-    },
-]
+ANIMATION_FPS = 24
+CANVAS_W, CANVAS_H = 720, 1280  # Standard 9:16 Reels resolution
 
 
 def _get_secret(key_name: str) -> str:
@@ -154,32 +208,23 @@ def _get_secret(key_name: str) -> str:
 
 
 # --- SESSION STATE ---
-defaults = {
-    "scenes": copy.deepcopy(DEFAULT_SCENES),
-    "images": [],
-    "scene_videos": [],
-    "ref_photo_path": "",
-    "audio_files": [],
-    "bgm_audio_path": "",
-    "bgm_volume": 0.16,
-    "voice_volume": 1.0,
-    "locked_character_prompt": DEFAULT_CHAR_PROMPT,
-    "lock_character_enabled": True,
-    "animation_style_name": "2D Warm Illustrated Reel (Like Screenshots)",
-    "format_preset": "9:16 Reels / Shorts",
-    "hook_banner_enabled": True,
-    "hook_line_1": "Keep Your Blessings Quiet",
-    "hook_line_2": "Until They're Permanent",
-    "highlight_words": "Quiet, Permanent",
-    "subtitle_lang": "English",
-    "gen_batch_id": 0,
-}
-for k, v in defaults.items():
-    if k not in st.session_state:
-        st.session_state[k] = v
+if "selected_template" not in st.session_state:
+    st.session_state.selected_template = list(REEL_TEMPLATES.keys())[0]
+if "scenes" not in st.session_state:
+    st.session_state.scenes = copy.deepcopy(REEL_TEMPLATES[st.session_state.selected_template]["scenes"])
+if "images" not in st.session_state:
+    st.session_state.images = []
+if "scene_videos" not in st.session_state:
+    st.session_state.scene_videos = []
+if "audio_files" not in st.session_state:
+    st.session_state.audio_files = []
+if "bgm_path" not in st.session_state:
+    st.session_state.bgm_path = ""
+if "batch_id" not in st.session_state:
+    st.session_state.batch_id = 0
 
 
-# --- MOVIEPY COMPATIBILITY HELPERS ---
+# --- MOVIEPY HELPERS ---
 def set_dur(clip, d):
     return clip.with_duration(d) if MOVIEPY_V2 else clip.set_duration(d)
 
@@ -199,13 +244,9 @@ def vol_scale(clip, factor):
 
 
 def loop_clip(clip, target_duration):
-    cur = float(clip.duration or 0.1)
-    if cur <= 0:
-        cur = 0.1
+    cur = max(0.1, float(clip.duration or 0.1))
     if target_duration <= cur:
-        if MOVIEPY_V2 and hasattr(clip, "subclipped"):
-            return set_dur(clip.subclipped(0, target_duration), target_duration)
-        return set_dur(clip.subclip(0, target_duration), target_duration)
+        return set_dur(clip.subclipped(0, target_duration) if MOVIEPY_V2 else clip.subclip(0, target_duration), target_duration)
     if hasattr(clip, "loop"):
         return set_dur(clip.loop(duration=target_duration), target_duration)
     reps = int(math.ceil(target_duration / cur))
@@ -216,32 +257,20 @@ def run_async(coro):
     try:
         loop = asyncio.get_event_loop()
         if loop.is_running():
-            new_loop = asyncio.new_event_loop()
+            nl = asyncio.new_event_loop()
             try:
-                return new_loop.run_until_complete(coro)
+                return nl.run_until_complete(coro)
             finally:
-                new_loop.close()
+                nl.close()
         return loop.run_until_complete(coro)
     except RuntimeError:
         return asyncio.run(coro)
 
 
-# --- IMAGE & FRAME COMPOSITING ---
-def fit_image_to_box(pil_img: Image.Image, box_w: int, box_h: int) -> Image.Image:
-    resampling = getattr(Image, "Resampling", Image).LANCZOS
-    rgb = pil_img.convert("RGB")
-    scale = max(box_w / max(1, rgb.width), box_h / max(1, rgb.height))
-    nw = max(box_w, int(round(rgb.width * scale)))
-    nh = max(box_h, int(round(rgb.height * scale)))
-    resized = rgb.resize((nw, nh), resampling)
-    left = max(0, (nw - box_w) // 2)
-    top = max(0, (nh - box_h) // 2)
-    return resized.crop((left, top, left + box_w, top + box_h)).resize((box_w, box_h), resampling)
-
-
+# --- FONTS & GRAPHICS ---
 @st.cache_resource(show_spinner=False)
-def load_font(size: int, lang: str = "English"):
-    if lang == "Kannada":
+def load_font(size: int, is_kannada: bool = False):
+    if is_kannada:
         kn_path = "/tmp/NotoSansKannada-Bold.ttf"
         if not os.path.exists(kn_path):
             try:
@@ -257,266 +286,160 @@ def load_font(size: int, lang: str = "English"):
         if os.path.exists(kn_path):
             return ImageFont.truetype(kn_path, int(size))
 
-    for candidate in (
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-        "/System/Library/Fonts/Supplemental/Arial Bold.ttf",
-        "arialbd.ttf",
-    ):
-        if os.path.exists(candidate):
-            return ImageFont.truetype(candidate, int(size))
+    for p in ("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", "arialbd.ttf"):
+        if os.path.exists(p):
+            return ImageFont.truetype(p, int(size))
     return ImageFont.load_default()
 
 
-def draw_highlighted_line(draw: ImageDraw.Draw, line: str, y: int, canvas_w: int, font, highlight_set: set):
-    words = line.split()
-    if not words:
-        return
-    space_w = draw.textbbox((0, 0), " ", font=font)[2] - draw.textbbox((0, 0), " ", font=font)[0]
-    word_boxes = []
-    total_w = 0
-    for w in words:
-        bb = draw.textbbox((0, 0), w, font=font)
-        ww = bb[2] - bb[0]
-        word_boxes.append((w, ww))
-        total_w += ww
-    total_w += max(0, len(words) - 1) * space_w
-
-    cur_x = max(16, (canvas_w - total_w) // 2)
-    for w, ww in word_boxes:
-        clean_word = w.strip(".,!?:;\"'()").lower()
-        is_hi = clean_word in highlight_set
-        fill_color = (255, 222, 89, 255) if is_hi else (255, 255, 255, 255)
-        draw.text((cur_x + 2, y + 2), w, font=font, fill=(0, 0, 0, 230))
-        draw.text((cur_x, y), w, font=font, fill=fill_color)
-        cur_x += ww + space_w
+def fit_cover(pil_img: Image.Image, target_w: int, target_h: int) -> Image.Image:
+    resampling = getattr(Image, "Resampling", Image).LANCZOS
+    rgb = pil_img.convert("RGB")
+    scale = max(target_w / max(1, rgb.width), target_h / max(1, rgb.height))
+    nw, nh = max(target_w, int(round(rgb.width * scale))), max(target_h, int(round(rgb.height * scale)))
+    resized = rgb.resize((nw, nh), resampling)
+    left, top = max(0, (nw - target_w) // 2), max(0, (nh - target_h) // 2)
+    return resized.crop((left, top, left + target_w, top + target_h)).resize((target_w, target_h), resampling)
 
 
-def compose_reel_frame(
-    media_rgb: Image.Image,
-    canvas_w: int,
-    canvas_h: int,
-    hook_enabled: bool,
-    hook_l1: str,
-    hook_l2: str,
-    highlight_words_str: str,
-    subtitle_text: str,
-    lang: str,
-) -> Image.Image:
-    """Composes a black-backed Reel frame with optional top hook banner, centered visual, and bottom subtitle."""
-    canvas = Image.new("RGBA", (canvas_w, canvas_h), (0, 0, 0, 255))
-    draw = ImageDraw.Draw(canvas)
+def generate_offline_fallback_art(scene_idx: int, target_w: int, target_h: int, label_text: str) -> Image.Image:
+    """Guaranteed fallback artwork if all free external AI APIs are rate-limited."""
+    img = Image.new("RGB", (target_w, target_h), (24, 30, 44))
+    draw = ImageDraw.Draw(img)
+    palettes = [
+        ((255, 183, 77), (45, 55, 72)),
+        ((74, 222, 128), (20, 35, 30)),
+        ((96, 165, 250), (25, 35, 58)),
+        ((244, 114, 182), (45, 25, 45)),
+    ]
+    accent, bg_tone = palettes[scene_idx % len(palettes)]
+    for y in range(target_h):
+        ratio = y / max(1, target_h)
+        r = int(bg_tone[0] * (1 - ratio) + 12 * ratio)
+        g = int(bg_tone[1] * (1 - ratio) + 16 * ratio)
+        b = int(bg_tone[2] * (1 - ratio) + 26 * ratio)
+        draw.line([(0, y), (target_w, y)], fill=(r, g, b))
 
-    highlight_set = {
-        w.strip().lower() for w in (highlight_words_str or "").split(",") if w.strip()
-    }
-
-    top_pad = int(canvas_h * 0.14) if hook_enabled and (hook_l1.strip() or hook_l2.strip()) else int(canvas_h * 0.06)
-    bot_pad = int(canvas_h * 0.14) if subtitle_text and lang != "None" else int(canvas_h * 0.06)
-    media_h = max(240, canvas_h - top_pad - bot_pad)
-
-    fitted = fit_image_to_box(media_rgb, canvas_w, media_h)
-    canvas.paste(fitted.convert("RGBA"), (0, top_pad))
-
-    if hook_enabled and (hook_l1.strip() or hook_l2.strip()):
-        hook_font_sz = max(22, int(round(canvas_w * 0.044)))
-        h_font = load_font(hook_font_sz, lang="English")
-        line_step = hook_font_sz + 8
-        y_cursor = max(24, int(canvas_h * 0.055))
-        for raw_ln in (hook_l1.strip(), hook_l2.strip()):
-            if raw_ln:
-                for wrapped in textwrap.wrap(raw_ln, width=32)[:2]:
-                    draw_highlighted_line(draw, wrapped, y_cursor, canvas_w, h_font, highlight_set)
-                    y_cursor += line_step
-
-    if subtitle_text and subtitle_text.strip() and lang != "None":
-        sub_sz = max(18, int(round(canvas_w * 0.032)))
-        s_font = load_font(sub_sz, lang=lang)
-        cpl = max(18, int((canvas_w * 0.86) / max(9, sub_sz * 0.56)))
-        sub_lines = textwrap.wrap(subtitle_text.strip(), width=cpl)[:2]
-        if sub_lines:
-            lh = sub_sz + 7
-            box_h = len(sub_lines) * lh + 14
-            box_y = min(canvas_h - box_h - 20, top_pad + media_h + 14)
-            pad_x = int(canvas_w * 0.05)
-            draw.rounded_rectangle(
-                [pad_x, box_y, canvas_w - pad_x, box_y + box_h],
-                radius=10,
-                fill=(18, 22, 32, 215),
-            )
-            sy = box_y + 7
-            for ln in sub_lines:
-                bb = draw.textbbox((0, 0), ln, font=s_font)
-                tx = max(pad_x + 8, (canvas_w - (bb[2] - bb[0])) // 2)
-                draw.text((tx + 1, sy + 1), ln, font=s_font, fill=(0, 0, 0, 255))
-                draw.text((tx, sy), ln, font=s_font, fill=(248, 250, 252, 255))
-                sy += lh
-
-    return canvas.convert("RGB")
+    cx, cy = target_w // 2, target_h // 2
+    draw.ellipse([cx - 170, cy - 170, cx + 170, cy + 170], fill=accent)
+    draw.ellipse([cx - 110, cy - 110, cx + 110, cy + 110], fill=(255, 248, 230))
+    font = load_font(24, is_kannada=any("\u0c80" <= c <= "\u0cff" for c in label_text))
+    lines = textwrap.wrap(label_text or f"Scene {scene_idx + 1}", width=28)[:3]
+    ty = cy + 195
+    for ln in lines:
+        bb = draw.textbbox((0, 0), ln, font=font)
+        draw.text(((target_w - (bb[2] - bb[0])) // 2, ty), ln, font=font, fill=(255, 255, 255))
+        ty += 34
+    return img
 
 
-# --- FREE KEYFRAME & VIDEO GENERATION ---
-def generate_keyframe_image(
-    hf_token: str,
+# --- MULTI-PROVIDER FREE IMAGE GENERATOR (NEVER FAILS) ---
+def generate_scene_image(
     gemini_key: str,
-    prompt_text: str,
-    box_w: int,
-    box_h: int,
-    ref_photo_path: str = "",
-    seed: int = 42,
+    hf_token: str,
+    prompt: str,
+    target_w: int,
+    target_h: int,
+    scene_idx: int,
+    fallback_label: str,
 ):
-    clean_prompt = " ".join((prompt_text or "").split())[:1200]
-    errors = []
+    clean_p = " ".join((prompt or "").split())[:1000]
+    logs = []
 
-    # 1. Hugging Face FLUX.1-schnell (free tier with HF token)
-    if hf_token and hf_token.strip():
-        try:
-            client = InferenceClient(token=hf_token.strip())
-            w_hf = max(512, min(1024, (box_w // 8) * 8))
-            h_hf = max(512, min(1024, (box_h // 8) * 8))
-            img = client.text_to_image(
-                prompt=clean_prompt,
-                model="black-forest-labs/FLUX.1-schnell",
-                width=w_hf,
-                height=h_hf,
-            )
-            return fit_image_to_box(img, box_w, box_h), "Hugging Face FLUX.1-schnell", errors
-        except Exception as exc:
-            errors.append(f"HF Image: {exc}")
-
-    # 2. Gemini Image Generation (with optional reference photo)
+    # 1. Gemini Image (Free tier via Google AI Studio)
     if gemini_key and gemini_key.strip():
         try:
             client = genai.Client(api_key=gemini_key.strip())
-            contents = [clean_prompt]
-            if ref_photo_path and os.path.exists(ref_photo_path):
-                with Image.open(ref_photo_path) as ref_im:
-                    contents = [
-                        ref_im.convert("RGB"),
-                        f"Keep the exact same character appearance and style from this reference image. {clean_prompt}",
-                    ]
             resp = client.models.generate_content(
                 model="gemini-2.5-flash-image",
-                contents=contents,
+                contents=[clean_p],
                 config=types.GenerateContentConfig(response_modalities=["IMAGE"]),
             )
             for cand in getattr(resp, "candidates", None) or []:
                 for part in getattr(getattr(cand, "content", None), "parts", None) or []:
                     inline = getattr(part, "inline_data", None)
                     if inline and getattr(inline, "data", None):
-                        im = Image.open(BytesIO(inline.data))
-                        return fit_image_to_box(im, box_w, box_h), "Gemini 2.5 Flash Image", errors
-        except Exception as exc:
-            errors.append(f"Gemini Image: {exc}")
+                        return fit_cover(Image.open(BytesIO(inline.data)), target_w, target_h), "Gemini 2.5 Image", logs
+        except Exception as e:
+            logs.append(f"Gemini: {e}")
 
-    # 3. Pollinations free no-key fallback
-    try:
-        w_p = max(384, min(1024, (box_w // 8) * 8))
-        h_p = max(384, min(1024, (box_h // 8) * 8))
-        encoded = urllib.parse.quote(clean_prompt[:320], safe="")
-        url = f"https://image.pollinations.ai/prompt/{encoded}?width={w_p}&height={h_p}&seed={seed}&model=flux&nologo=true"
-        r = requests.get(url, timeout=45)
-        if r.ok and "image/" in (r.headers.get("Content-Type") or ""):
-            im = Image.open(BytesIO(r.content))
-            return fit_image_to_box(im, box_w, box_h), "Pollinations FLUX", errors
-        errors.append(f"Pollinations HTTP {r.status_code}")
-    except Exception as exc:
-        errors.append(f"Pollinations: {exc}")
+    # 2. Hugging Face FLUX.1-schnell (Free tier with HF token)
+    if hf_token and hf_token.strip():
+        try:
+            client = InferenceClient(token=hf_token.strip())
+            w_hf = max(512, min(1024, (target_w // 8) * 8))
+            h_hf = max(512, min(1024, (target_h // 8) * 8))
+            im = client.text_to_image(prompt=clean_p, model="black-forest-labs/FLUX.1-schnell", width=w_hf, height=h_hf)
+            return fit_cover(im, target_w, target_h), "Hugging Face FLUX", logs
+        except Exception as e:
+            logs.append(f"HF: {e}")
 
-    # 4. Uploaded reference photo fallback
-    if ref_photo_path and os.path.exists(ref_photo_path):
-        with Image.open(ref_photo_path) as im:
-            return fit_image_to_box(im, box_w, box_h), "Reference Photo", errors
+    # 3. Pollinations Free No-Key Endpoint (with retry)
+    w_p = max(512, min(1024, (target_w // 8) * 8))
+    h_p = max(512, min(1024, (target_h // 8) * 8))
+    encoded = urllib.parse.quote(clean_p[:320], safe="")
+    for attempt in range(2):
+        try:
+            seed = 100 + scene_idx * 37 + attempt
+            url = f"https://image.pollinations.ai/prompt/{encoded}?width={w_p}&height={h_p}&seed={seed}&model=flux&nologo=true"
+            r = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=45)
+            if r.ok and "image/" in (r.headers.get("Content-Type") or ""):
+                return fit_cover(Image.open(BytesIO(r.content)), target_w, target_h), "Pollinations Free FLUX", logs
+            logs.append(f"Pollinations HTTP {r.status_code}")
+        except Exception as e:
+            logs.append(f"Pollinations: {e}")
+        time.sleep(1.5)
 
-    return None, None, errors
-
-
-def try_hf_image_to_video(hf_token: str, keyframe_path: str, prompt_text: str, out_mp4: str):
-    if not (hf_token and hf_token.strip() and keyframe_path and os.path.exists(keyframe_path)):
-        return False, "No HF token or keyframe"
-    try:
-        client = InferenceClient(token=hf_token.strip())
-        if not hasattr(client, "image_to_video"):
-            return False, "image_to_video not supported in installed huggingface_hub"
-        with open(keyframe_path, "rb") as f:
-            img_bytes = f.read()
-        for model_id in ["Wan-AI/Wan2.1-I2V-14B-480P", "Lightricks/LTX-Video"]:
-            try:
-                vid_bytes = client.image_to_video(image=img_bytes, prompt=prompt_text[:800], model=model_id)
-                if vid_bytes and len(vid_bytes) > 5000:
-                    with open(out_mp4, "wb") as out_f:
-                        out_f.write(vid_bytes)
-                    return True, f"HF {model_id}"
-            except Exception as inner_exc:
-                last_err = str(inner_exc)
-        return False, last_err
-    except Exception as exc:
-        return False, str(exc)
+    # 4. Guaranteed Offline Art Fallback (so video rendering never crashes)
+    return generate_offline_fallback_art(scene_idx, target_w, target_h, fallback_label), "Offline Art Fallback", logs
 
 
-def render_smooth_motion_clip(
-    img_path: str,
-    out_mp4: str,
-    box_w: int,
-    box_h: int,
-    duration: float = 4.0,
-    motion_mode: str = "Auto Alternate",
-    scene_idx: int = 0,
-):
-    """Smooth pan/zoom + subtle warm light particles—completely free and works offline/in cloud."""
+def animate_keyframe_to_mp4(img_path: str, out_mp4: str, box_w: int, box_h: int, duration: float, motion: str, idx: int):
     resampling = getattr(Image, "Resampling", Image).LANCZOS
-    safe_dur = max(1.0, float(duration))
-    modes = ["Zoom In", "Pan Right", "Zoom Out", "Pan Left"]
-    active = modes[scene_idx % len(modes)] if motion_mode == "Auto Alternate" else motion_mode
-
+    safe_dur = max(1.5, float(duration))
     with Image.open(img_path) as im:
-        base = fit_image_to_box(im, box_w, box_h)
+        base = fit_cover(im, box_w, box_h)
 
-    overscan = 1.16
+    overscan = 1.15
     cw, ch = int(box_w * overscan), int(box_h * overscan)
-    canvas_img = base.resize((cw, ch), resampling)
+    big_im = base.resize((cw, ch), resampling)
 
-    rng = random.Random(700 + scene_idx)
-    motes = [
-        (rng.uniform(0.05, 0.95), rng.uniform(0.08, 0.95), rng.uniform(0.03, 0.10), rng.randint(2, 4), rng.randint(90, 175))
-        for _ in range(16)
-    ]
+    rng = random.Random(300 + idx)
+    particles = [(rng.random(), rng.random(), rng.uniform(0.03, 0.09), rng.randint(2, 4)) for _ in range(14)]
 
     def make_frame(t):
         u = max(0.0, min(1.0, float(t) / safe_dur))
         ease = u * u * (3.0 - 2.0 * u)
-
-        if active == "Zoom In":
-            scale = 1.0 + 0.12 * ease
-        elif active == "Zoom Out":
-            scale = 1.13 - 0.12 * ease
+        if motion == "Zoom In":
+            sc = 1.0 + 0.12 * ease
+        elif motion == "Zoom Out":
+            sc = 1.13 - 0.12 * ease
         else:
-            scale = 1.08
+            sc = 1.08
 
-        win_w = max(2, int(round(box_w / scale)))
-        win_h = max(2, int(round(box_h / scale)))
-
-        if active == "Pan Right":
-            x0 = int(round((cw - win_w) * ease))
-            y0 = (ch - win_h) // 2 + int(round(math.sin(u * math.pi * 2) * 5))
-        elif active == "Pan Left":
-            x0 = int(round((cw - win_w) * (1.0 - ease)))
-            y0 = (ch - win_h) // 2 + int(round(math.cos(u * math.pi * 2) * 5))
+        ww, wh = max(2, int(round(box_w / sc))), max(2, int(round(box_h / sc)))
+        if motion == "Pan Right":
+            x0 = int(round((cw - ww) * ease))
+            y0 = (ch - wh) // 2
+        elif motion == "Pan Left":
+            x0 = int(round((cw - ww) * (1.0 - ease)))
+            y0 = (ch - wh) // 2
         else:
-            x0 = (cw - win_w) // 2 + int(round(math.sin(u * math.pi * 2) * 8))
-            y0 = (ch - win_h) // 2 + int(round(math.cos(u * math.pi * 2) * 6))
+            x0 = (cw - ww) // 2 + int(round(math.sin(u * math.pi * 2) * 7))
+            y0 = (ch - wh) // 2 + int(round(math.cos(u * math.pi * 2) * 5))
 
-        x0 = max(0, min(cw - win_w, x0))
-        y0 = max(0, min(ch - win_h, y0))
-        crop = canvas_img.crop((x0, y0, x0 + win_w, y0 + win_h)).resize((box_w, box_h), resampling)
+        x0 = max(0, min(cw - ww, x0))
+        y0 = max(0, min(ch - wh, y0))
+        crop = big_im.crop((x0, y0, x0 + ww, y0 + wh)).resize((box_w, box_h), resampling)
 
-        overlay = Image.new("RGBA", (box_w, box_h), (0, 0, 0, 0))
-        draw = ImageDraw.Draw(overlay)
-        for mx0, my0, spd, rad, alpha in motes:
-            mx = int(((mx0 + math.sin(u * 3.0 + my0 * 5.0) * 0.02) % 1.0) * box_w)
-            my = int(((my0 - u * spd) % 1.0) * box_h)
-            draw.ellipse([mx - rad, my - rad, mx + rad, my + rad], fill=(255, 224, 150, alpha))
+        ov = Image.new("RGBA", (box_w, box_h), (0, 0, 0, 0))
+        d = ImageDraw.Draw(ov)
+        for px0, py0, spd, rad in particles:
+            px = int(((px0 + math.sin(u * 3 + py0 * 5) * 0.02) % 1.0) * box_w)
+            py = int(((py0 - u * spd) % 1.0) * box_h)
+            d.ellipse([px - rad, py - rad, px + rad, py + rad], fill=(255, 230, 160, 120))
 
-        return np.asarray(Image.alpha_composite(crop.convert("RGBA"), overlay).convert("RGB"), dtype=np.uint8)
+        return np.asarray(Image.alpha_composite(crop.convert("RGBA"), ov).convert("RGB"), dtype=np.uint8)
 
     clip = set_dur(DynamicVideoClip(make_frame, duration=safe_dur), safe_dur)
     try:
@@ -528,7 +451,6 @@ def render_smooth_motion_clip(
             ffmpeg_params=["-crf", "20", "-preset", "veryfast", "-pix_fmt", "yuv420p"],
             logger=None,
         )
-        return out_mp4
     finally:
         try:
             clip.close()
@@ -536,47 +458,81 @@ def render_smooth_motion_clip(
             pass
 
 
-def generate_ai_script_gemini(gemini_key: str, topic: str, num_scenes: int, char_lock: str, style_name: str):
-    if not (gemini_key and gemini_key.strip()):
-        return None, "Enter a Gemini API key to generate custom scripts, or edit the scenes below directly."
-    client = genai.Client(api_key=gemini_key.strip())
-    prompt = f"""
-Create a {num_scenes}-scene short social media Reel script.
-Art Style: {style_name}
-Character Consistency Lock: {char_lock}
-Topic / Story: {topic}
+def compose_final_frame(
+    raw_rgb: Image.Image,
+    layout_mode: str,
+    banner_bg: tuple,
+    highlight_color: tuple,
+    hook_l1: str,
+    hook_l2: str,
+    highlights_csv: str,
+    subtitle_text: str,
+):
+    canvas = Image.new("RGBA", (CANVAS_W, CANVAS_H), (0, 0, 0, 255))
+    draw = ImageDraw.Draw(canvas)
+    hi_words = {w.strip().lower() for w in (highlights_csv or "").split(",") if w.strip()}
 
-Return ONLY a valid JSON array of {num_scenes} objects (no markdown fences) with keys:
-- "narration": short, punchy English voiceover (1 sentence)
-- "kannada_narration": natural Kannada translation (1 sentence)
-- "motion": one of ["Zoom In", "Zoom Out", "Pan Right", "Pan Left"]
-- "action_motion": subtle character movement & camera motion description
-- "visual": scene visual description keeping the exact same characters consistent
-"""
-    last_err = "Unknown error"
-    for model_name in ["gemini-2.5-flash", "gemini-2.0-flash"]:
-        try:
-            resp = client.models.generate_content(model=model_name, contents=prompt)
-            raw = (resp.text or "").strip()
-            if raw.startswith("```"):
-                raw = "\n".join(ln for ln in raw.splitlines() if not ln.strip().startswith("```")).strip()
-            data = json.loads(raw)
-            if isinstance(data, list) and data:
-                return data[:num_scenes], None
-        except Exception as exc:
-            last_err = str(exc)
-    return None, last_err
+    if layout_mode == "Full Screen 9:16":
+        fitted = fit_cover(raw_rgb, CANVAS_W, CANVAS_H)
+        canvas.paste(fitted.convert("RGBA"), (0, 0))
+        media_bottom = CANVAS_H - 180
+    else:
+        top_h = int(CANVAS_H * 0.16)
+        bot_h = int(CANVAS_H * 0.16)
+        mid_h = CANVAS_H - top_h - bot_h
+        fitted = fit_cover(raw_rgb, CANVAS_W, mid_h)
+        canvas.paste(fitted.convert("RGBA"), (0, top_h))
+        media_bottom = top_h + mid_h
+
+        # Draw Top Hook Banner (@wealth black style or @cartoonfun.world green pill style)
+        if hook_l1.strip() or hook_l2.strip():
+            has_kn = any("\u0c80" <= c <= "\u0cff" for c in (hook_l1 + hook_l2))
+            font = load_font(32 if not has_kn else 28, is_kannada=has_kn)
+            if banner_bg[0] > 0 or banner_bg[1] > 0 or banner_bg[2] > 0:
+                draw.rounded_rectangle([32, 65, CANVAS_W - 32, 145], radius=16, fill=banner_bg)
+
+            y_cur = 78
+            for line in (hook_l1.strip(), hook_l2.strip()):
+                if not line:
+                    continue
+                words = line.split()
+                sp_w = draw.textbbox((0, 0), " ", font=font)[2] - draw.textbbox((0, 0), " ", font=font)[0]
+                widths = [draw.textbbox((0, 0), w, font=font)[2] - draw.textbbox((0, 0), w, font=font)[0] for w in words]
+                tot_w = sum(widths) + max(0, len(words) - 1) * sp_w
+                x_cur = max(20, (CANVAS_W - tot_w) // 2)
+                for w, ww in zip(words, widths):
+                    clean_w = w.strip(".,!?:;\"'()").lower()
+                    col = highlight_color if clean_w in hi_words else (255, 255, 255, 255)
+                    draw.text((x_cur + 2, y_cur + 2), w, font=font, fill=(0, 0, 0, 230))
+                    draw.text((x_cur, y_cur), w, font=font, fill=col)
+                    x_cur += ww + sp_w
+                y_cur += 42
+
+    # Bottom Subtitle Caption
+    if subtitle_text and subtitle_text.strip():
+        has_kn_sub = any("\u0c80" <= c <= "\u0cff" for c in subtitle_text)
+        s_font = load_font(24, is_kannada=has_kn_sub)
+        lines = textwrap.wrap(subtitle_text.strip(), width=34)[:2]
+        box_h = len(lines) * 32 + 16
+        box_y = min(CANVAS_H - box_h - 30, media_bottom + 18)
+        draw.rounded_rectangle([36, box_y, CANVAS_W - 36, box_y + box_h], radius=12, fill=(15, 20, 30, 215))
+        sy = box_y + 8
+        for ln in lines:
+            bb = draw.textbbox((0, 0), ln, font=s_font)
+            tx = max(44, (CANVAS_W - (bb[2] - bb[0])) // 2)
+            draw.text((tx, sy), ln, font=s_font, fill=(255, 255, 255, 255))
+            sy += 32
+
+    return canvas.convert("RGB")
 
 
-# --- HEADER ---
+# --- UI HEADER ---
 st.markdown(
     """
     <div class="studio-header">
-        <div style="display:flex;align-items:center;gap:10px;">
-            <span class="studio-pill">FREE REELS STUDIO</span>
-            <span style="font-weight:700;font-size:17px;">2D Illustrated Reels & Story Generator</span>
-        </div>
-        <div class="studio-sub">Hook Banner + Highlighted Words • Character Lock • Free AI Art & Motion • Edge TTS</div>
+        <span class="studio-pill">ALL-IN-ONE VIRAL REELS STUDIO</span>
+        <h3 style="margin:8px 0 4px 0;">Create All 4 Viral AI Reel Styles (2D Couple • Kannada Cartoon • 3D Explainer • 3D Mythological)</h3>
+        <div style="color:#9da7b3;font-size:13px;">Works 100% in Browser (GitHub + Streamlit) • Built-in Offline Fallback • Free Edge-TTS Kannada & English Voices</div>
     </div>
     """,
     unsafe_allow_html=True,
@@ -584,331 +540,238 @@ st.markdown(
 
 # --- SIDEBAR ---
 with st.sidebar:
-    st.header("📐 Format & Hook Banner")
-    st.session_state.format_preset = st.selectbox(
-        "Aspect Ratio",
-        list(FORMAT_PRESETS.keys()),
-        index=list(FORMAT_PRESETS.keys()).index(st.session_state.format_preset),
+    st.header("🎨 1. Choose Viral Reel Style")
+    chosen_tpl = st.selectbox(
+        "Select Template Style",
+        list(REEL_TEMPLATES.keys()),
+        index=list(REEL_TEMPLATES.keys()).index(st.session_state.selected_template),
     )
-    canvas_w, canvas_h, ratio_label = FORMAT_PRESETS[st.session_state.format_preset]
-    st.caption(f"Canvas: **{canvas_w} × {canvas_h}** (`{ratio_label}`)")
+    if chosen_tpl != st.session_state.selected_template:
+        st.session_state.selected_template = chosen_tpl
+        st.session_state.scenes = copy.deepcopy(REEL_TEMPLATES[chosen_tpl]["scenes"])
+        st.session_state.batch_id += 1
+        st.rerun()
 
-    st.session_state.hook_banner_enabled = st.checkbox(
-        "Show Top Hook Title Banner", value=st.session_state.hook_banner_enabled
-    )
-    st.session_state.hook_line_1 = st.text_input("Hook Line 1", value=st.session_state.hook_line_1)
-    st.session_state.hook_line_2 = st.text_input("Hook Line 2", value=st.session_state.hook_line_2)
-    st.session_state.highlight_words = st.text_input(
-        "Highlight Words (comma-separated)", value=st.session_state.highlight_words
+    tpl_cfg = REEL_TEMPLATES[chosen_tpl]
+
+    st.subheader("🏷️ Top Hook Banner")
+    hook_l1 = st.text_input("Hook Line 1", value=tpl_cfg["hook_l1"], key=f"hl1_{st.session_state.batch_id}")
+    hook_l2 = st.text_input("Hook Line 2", value=tpl_cfg["hook_l2"], key=f"hl2_{st.session_state.batch_id}")
+    highlights_csv = st.text_input(
+        "Highlight Words (Yellow)", value=tpl_cfg["highlights"], key=f"hi_{st.session_state.batch_id}"
     )
 
     st.divider()
-    st.subheader("🔑 Optional Free API Keys")
-    gemini_key = st.text_input(
-        "Gemini API Key (Script / Image)",
-        value=_get_secret("GEMINI_API_KEY"),
-        type="password",
-    )
-    hf_token = st.text_input(
-        "Hugging Face Token (FLUX / Video)",
-        value=_get_secret("HF_TOKEN"),
-        type="password",
-    )
+    st.subheader("🔑 Free AI API Keys (Optional)")
+    st.caption("Leave blank to use Pollinations Free + Built-in Art Engine automatically.")
+    gemini_key = st.text_input("Google AI Studio Key (Free Gemini)", value=_get_secret("GEMINI_API_KEY"), type="password")
+    hf_token = st.text_input("Hugging Face Token (Free FLUX)", value=_get_secret("HF_TOKEN"), type="password")
 
 # --- TABS ---
-tab1, tab2, tab3, tab4 = st.tabs([
-    "1️⃣ Story & Character",
-    "2️⃣ Generate Visuals & Motion",
-    "3️⃣ Voiceover & Audio",
-    "4️⃣ Export Final Reel",
-])
+t1, t2, t3 = st.tabs(["1️⃣ Edit Scenes & Character", "2️⃣ Generate Animated Clips & Voice", "3️⃣ Render & Download MP4"])
 
-with tab1:
-    st.markdown("### 1. Character Lock & Scene Script")
-    st.session_state.animation_style_name = st.selectbox(
-        "Visual Style",
-        list(ANIMATION_STYLES.keys()),
-        index=list(ANIMATION_STYLES.keys()).index(st.session_state.animation_style_name),
-    )
-    st.session_state.lock_character_enabled = st.checkbox(
-        "Lock Character Appearance Across All Scenes", value=st.session_state.lock_character_enabled
-    )
-    st.session_state.locked_character_prompt = st.text_area(
-        "Character Description (Keep Identical Across Scenes)",
-        value=st.session_state.locked_character_prompt,
-        height=85,
-    )
-
-    ref_upload = st.file_uploader(
-        "Optional Character Reference Image (PNG / JPG)", type=["png", "jpg", "jpeg", "webp"]
-    )
-    if ref_upload:
-        os.makedirs("studio_assets", exist_ok=True)
-        rp = os.path.join("studio_assets", f"ref_{int(time.time())}.png")
-        Image.open(ref_upload).convert("RGB").save(rp)
-        st.session_state.ref_photo_path = rp
-        st.image(rp, caption="Character Reference Saved", width=180)
-
-    st.divider()
-    story_idea = st.text_area(
-        "Reel Theme / Message (Optional — if using Gemini script generator):",
-        value="Keep your blessings quiet until they are permanent; protect your peace.",
+with t1:
+    st.markdown("### Customize Your Characters & Scenes")
+    char_lock = st.text_area(
+        "Character Consistency Prompt (Kept identical across every scene):",
+        value=tpl_cfg["char_lock"],
         height=70,
+        key=f"cl_{st.session_state.batch_id}",
     )
-    n_sc = st.slider("Number of Scenes", 2, 6, len(st.session_state.scenes))
-    if st.button("✨ Generate Script with Gemini", type="primary"):
-        with st.spinner("Generating scenes..."):
-            generated, err = generate_ai_script_gemini(
-                gemini_key,
-                story_idea,
-                n_sc,
-                st.session_state.locked_character_prompt,
-                st.session_state.animation_style_name,
-            )
-            if generated:
-                st.session_state.scenes = generated
-                st.session_state.gen_batch_id += 1
-                st.success("Script updated!")
-                st.rerun()
-            else:
-                st.info(f"Using editable default scenes ({err})")
 
     for idx, sc in enumerate(st.session_state.scenes):
-        with st.expander(f"Scene {idx + 1}", expanded=(idx == 0)):
+        with st.expander(f"Scene {idx + 1}", expanded=True):
             c1, c2 = st.columns(2)
             with c1:
                 sc["narration"] = st.text_area(
-                    "English Narration",
+                    "English Voiceover / Caption",
                     value=sc.get("narration", ""),
-                    key=f"en_{idx}_b{st.session_state.gen_batch_id}",
+                    key=f"en_{idx}_{st.session_state.batch_id}",
                 )
                 sc["kannada_narration"] = st.text_area(
-                    "Kannada Narration",
+                    "Kannada Voiceover / Caption",
                     value=sc.get("kannada_narration", ""),
-                    key=f"kn_{idx}_b{st.session_state.gen_batch_id}",
+                    key=f"kn_{idx}_{st.session_state.batch_id}",
                 )
             with c2:
                 sc["visual"] = st.text_area(
-                    "Scene Visual Prompt",
+                    "Visual Scene Prompt",
                     value=sc.get("visual", ""),
-                    key=f"vis_{idx}_b{st.session_state.gen_batch_id}",
+                    key=f"vis_{idx}_{st.session_state.batch_id}",
                 )
-                cur_m = sc.get("motion", "Zoom In")
-                m_idx = MOTION_CHOICES.index(cur_m) if cur_m in MOTION_CHOICES else 0
                 sc["motion"] = st.selectbox(
                     "Camera Motion",
-                    MOTION_CHOICES,
-                    index=m_idx,
-                    key=f"mot_{idx}_b{st.session_state.gen_batch_id}",
+                    ["Zoom In", "Zoom Out", "Pan Right", "Pan Left"],
+                    index=["Zoom In", "Zoom Out", "Pan Right", "Pan Left"].index(sc.get("motion", "Zoom In")),
+                    key=f"mot_{idx}_{st.session_state.batch_id}",
                 )
 
-with tab2:
-    st.markdown("### 2. Generate Scene Art & Animated Clips")
-    use_hf_i2v = st.checkbox(
-        "Try Hugging Face Image-to-Video first (falls back automatically to smooth motion)",
-        value=False,
-    )
-    clip_duration = st.slider("Seconds per Scene Clip", 2.5, 6.0, 4.0, 0.5)
+with t2:
+    st.markdown("### Generate Scene Art, Motion Clips & Neural Voiceover")
+    col_a, col_b, col_c = st.columns(3)
+    with col_a:
+        voice_name = st.selectbox("Voiceover Speaker", list(TTS_VOICES.keys()))
+    with col_b:
+        lang_mode = st.selectbox("Script Language", ["Kannada", "English", "None (Music Only)"])
+    with col_c:
+        sec_per_scene = st.slider("Seconds per Clip", 2.5, 6.0, 4.0, 0.5)
 
-    if st.button("🚀 Generate All Scene Clips", type="primary", use_container_width=True):
-        os.makedirs("studio_assets/frames", exist_ok=True)
-        os.makedirs("studio_assets/clips", exist_ok=True)
+    if st.button("🚀 Generate All Scenes & Voiceovers", type="primary", use_container_width=True):
+        os.makedirs("reels_build/img", exist_ok=True)
+        os.makedirs("reels_build/vid", exist_ok=True)
+        os.makedirs("reels_build/aud", exist_ok=True)
 
-        style_txt = ANIMATION_STYLES[st.session_state.animation_style_name]
-        char_txt = st.session_state.locked_character_prompt if st.session_state.lock_character_enabled else ""
-        top_pad = int(canvas_h * 0.14) if st.session_state.hook_banner_enabled else int(canvas_h * 0.06)
-        media_box_h = max(240, canvas_h - top_pad - int(canvas_h * 0.14))
-
-        new_imgs = []
-        new_clips = []
+        box_h = CANVAS_H if tpl_cfg["layout_mode"] == "Full Screen 9:16" else int(CANVAS_H * 0.68)
+        new_imgs, new_vids, new_auds = [], [], []
         prog = st.progress(0.0)
+        status = st.empty()
 
         for idx, sc in enumerate(st.session_state.scenes):
-            prompt = f"{style_txt}. {char_txt}. {sc.get('visual', '')}"
-            kf_path = os.path.join("studio_assets/frames", f"scene_{idx}_{int(time.time())}.png")
-            clip_path = os.path.join("studio_assets/clips", f"scene_{idx}_{int(time.time())}.mp4")
+            status.info(f"Building Scene {idx + 1}/{len(st.session_state.scenes)}...")
+            full_prompt = f"{tpl_cfg['style_prompt']}. {char_lock}. {sc.get('visual', '')}"
+            label_txt = sc.get("kannada_narration") if lang_mode == "Kannada" else sc.get("narration", "")
 
-            pil_im, src_label, errs = generate_keyframe_image(
-                hf_token=hf_token,
+            # 1. Generate Keyframe Image
+            im_pil, src_used, _ = generate_scene_image(
                 gemini_key=gemini_key,
-                prompt_text=prompt,
-                box_w=canvas_w,
-                box_h=media_box_h,
-                ref_photo_path=st.session_state.ref_photo_path,
-                seed=100 + idx * 17,
+                hf_token=hf_token,
+                prompt=full_prompt,
+                target_w=CANVAS_W,
+                target_h=box_h,
+                scene_idx=idx,
+                fallback_label=label_txt,
             )
+            im_path = os.path.join("reels_build/img", f"s_{idx}_{int(time.time())}.png")
+            im_pil.save(im_path)
+            new_imgs.append(im_path)
 
-            if pil_im is not None:
-                pil_im.save(kf_path)
-                new_imgs.append(kf_path)
+            # 2. Animate into Smooth Motion Clip
+            vid_path = os.path.join("reels_build/vid", f"v_{idx}_{int(time.time())}.mp4")
+            animate_keyframe_to_mp4(im_path, vid_path, CANVAS_W, box_h, sec_per_scene, sc.get("motion", "Zoom In"), idx)
+            new_vids.append(vid_path)
 
-                i2v_done = False
-                if use_hf_i2v and hf_token.strip():
-                    i2v_done, _ = try_hf_image_to_video(
-                        hf_token,
-                        kf_path,
-                        f"{prompt}. {sc.get('action_motion', '')}",
-                        clip_path,
-                    )
-                if not i2v_done:
-                    render_smooth_motion_clip(
-                        img_path=kf_path,
-                        out_mp4=clip_path,
-                        box_w=canvas_w,
-                        box_h=media_box_h,
-                        duration=clip_duration,
-                        motion_mode=sc.get("motion", "Zoom In"),
-                        scene_idx=idx,
-                    )
-                new_clips.append(clip_path)
+            # 3. Generate Free Neural Voiceover
+            if lang_mode != "None (Music Only)":
+                spoken = sc.get("kannada_narration") if lang_mode == "Kannada" else sc.get("narration", "")
+                if spoken and spoken.strip():
+                    aud_path = os.path.join("reels_build/aud", f"a_{idx}_{int(time.time())}.mp3")
+                    run_async(edge_tts.Communicate(spoken.strip(), TTS_VOICES[voice_name]).save(aud_path))
+                    new_auds.append(aud_path)
+                else:
+                    new_auds.append("")
             else:
-                st.warning(f"Scene {idx + 1}: Could not fetch image ({'; '.join(errs[-2:])})")
+                new_auds.append("")
 
+            st.toast(f"Scene {idx + 1} ready ({src_used})")
             prog.progress((idx + 1) / len(st.session_state.scenes))
 
         st.session_state.images = new_imgs
-        st.session_state.scene_videos = new_clips
-        if new_clips:
-            st.success(f"Generated {len(new_clips)} animated scene clips!")
+        st.session_state.scene_videos = new_vids
+        st.session_state.audio_files = new_auds
+        status.success("All scenes and voiceovers generated!")
 
     if st.session_state.scene_videos:
-        st.markdown("#### Scene Clip Previews")
-        cols = st.columns(min(4, len(st.session_state.scene_videos)))
+        cols = st.columns(min(3, len(st.session_state.scene_videos)))
         for i, vp in enumerate(st.session_state.scene_videos):
             if os.path.exists(vp):
                 with cols[i % len(cols)]:
                     st.caption(f"Scene {i + 1}")
                     st.video(vp)
 
-with tab3:
-    st.markdown("### 3. Free Neural Voiceover & Background Audio")
-    c_v1, c_v2 = st.columns(2)
-    with c_v1:
-        voice_label = st.selectbox("Voiceover Speaker", list(TTS_VOICES.keys()))
-    with c_v2:
-        st.session_state.subtitle_lang = st.selectbox(
-            "Subtitles & Voice Language", ["English", "Kannada", "None"]
-        )
-
-    if st.button("🎙️ Generate Voiceovers (edge-tts)", type="primary"):
-        os.makedirs("studio_assets/audio", exist_ok=True)
-        voice_code = TTS_VOICES[voice_label]
-        paths = []
-        with st.spinner("Generating voiceovers..."):
-            for idx, sc in enumerate(st.session_state.scenes):
-                line = (
-                    sc.get("kannada_narration")
-                    if st.session_state.subtitle_lang == "Kannada" and sc.get("kannada_narration")
-                    else sc.get("narration", f"Scene {idx + 1}")
-                )
-                mp3_p = os.path.join("studio_assets/audio", f"vo_{idx}_{int(time.time())}.mp3")
-                run_async(edge_tts.Communicate(line, voice_code).save(mp3_p))
-                paths.append(mp3_p)
-        st.session_state.audio_files = paths
-        st.success(f"Generated {len(paths)} voiceover files!")
-
-    bgm_up = st.file_uploader("Upload Background Music (MP3 / WAV)", type=["mp3", "wav", "m4a"])
-    if bgm_up:
-        os.makedirs("studio_assets/audio", exist_ok=True)
-        bp = os.path.join("studio_assets/audio", f"bgm_{int(time.time())}.mp3")
+with t3:
+    st.markdown("### Upload Optional Background Music & Export Final Reel")
+    bgm_file = st.file_uploader("Upload Background Music (MP3 / WAV)", type=["mp3", "wav", "m4a"])
+    if bgm_file:
+        os.makedirs("reels_build/aud", exist_ok=True)
+        bp = os.path.join("reels_build/aud", f"bgm_{int(time.time())}.mp3")
         with open(bp, "wb") as f:
-            f.write(bgm_up.getbuffer())
-        st.session_state.bgm_audio_path = bp
-        st.success("Background music uploaded!")
+            f.write(bgm_file.getbuffer())
+        st.session_state.bgm_path = bp
+        st.success("Background music loaded!")
 
-    st.session_state.bgm_volume = st.slider("Background Music Volume", 0.0, 0.5, st.session_state.bgm_volume, 0.02)
+    bgm_vol = st.slider("Background Music Volume", 0.0, 0.4, 0.15, 0.02)
 
-with tab4:
-    st.markdown("### 4. Render & Download Final Reel")
-    if st.button("🎬 Render Final MP4 Reel", type="primary", use_container_width=True):
-        valid_clips = [p for p in st.session_state.scene_videos if os.path.exists(p)]
-        if not valid_clips:
-            st.error("Generate scene clips in Tab 2 first.")
+    if st.button("🎬 Render Final 9:16 MP4 Reel", type="primary", use_container_width=True):
+        vids = [p for p in st.session_state.scene_videos if os.path.exists(p)]
+        if not vids:
+            st.error("Generate scenes in Tab 2 first.")
         else:
-            os.makedirs("studio_exports", exist_ok=True)
-            out_final = os.path.join("studio_exports", f"reel_{int(time.time())}.mp4")
-            scene_final_clips = []
-            open_handles = []
+            os.makedirs("reels_exports", exist_ok=True)
+            final_out = os.path.join("reels_exports", f"Viral_Reel_{int(time.time())}.mp4")
+            final_clips, handles = [], []
 
-            with st.spinner("Compositing hook banner, motion, captions, and audio..."):
-                for idx, vp in enumerate(valid_clips):
+            with st.spinner("Compositing hook banner, subtitles, animations, and audio..."):
+                for idx, vp in enumerate(vids):
                     vc = VideoFileClip(vp)
-                    open_handles.append(vc)
+                    handles.append(vc)
 
-                    vo_clip = None
-                    if idx < len(st.session_state.audio_files) and os.path.exists(st.session_state.audio_files[idx]):
-                        vo_clip = AudioFileClip(st.session_state.audio_files[idx])
-                        open_handles.append(vo_clip)
-                        dur = max(float(vc.duration or 3.5), float(vo_clip.duration or 3.5) + 0.35)
+                    ac = None
+                    if idx < len(st.session_state.audio_files) and st.session_state.audio_files[idx] and os.path.exists(st.session_state.audio_files[idx]):
+                        ac = AudioFileClip(st.session_state.audio_files[idx])
+                        handles.append(ac)
+                        dur = max(float(vc.duration or 3.5), float(ac.duration or 3.5) + 0.3)
                     else:
                         dur = float(vc.duration or 4.0)
 
-                    looped_vc = loop_clip(vc, dur)
+                    lvc = loop_clip(vc, dur)
                     sc_obj = st.session_state.scenes[idx] if idx < len(st.session_state.scenes) else {}
                     sub_txt = (
                         sc_obj.get("kannada_narration", "")
-                        if st.session_state.subtitle_lang == "Kannada"
-                        else sc_obj.get("narration", "")
+                        if lang_mode == "Kannada"
+                        else (sc_obj.get("narration", "") if lang_mode == "English" else "")
                     )
 
-                    def transform_frame(get_frame, t, s_txt=sub_txt):
-                        raw_arr = get_frame(t)
-                        pil_raw = Image.fromarray(raw_arr)
-                        composed = compose_reel_frame(
-                            media_rgb=pil_raw,
-                            canvas_w=canvas_w,
-                            canvas_h=canvas_h,
-                            hook_enabled=st.session_state.hook_banner_enabled,
-                            hook_l1=st.session_state.hook_line_1,
-                            hook_l2=st.session_state.hook_line_2,
-                            highlight_words_str=st.session_state.highlight_words,
+                    def frame_pipe(gf, t, s_txt=sub_txt):
+                        pil_in = Image.fromarray(gf(t))
+                        comp = compose_final_frame(
+                            raw_rgb=pil_in,
+                            layout_mode=tpl_cfg["layout_mode"],
+                            banner_bg=tpl_cfg["banner_bg"],
+                            highlight_color=tpl_cfg["highlight_color"],
+                            hook_l1=hook_l1,
+                            hook_l2=hook_l2,
+                            highlights_csv=highlights_csv,
                             subtitle_text=s_txt,
-                            lang=st.session_state.subtitle_lang,
                         )
-                        return np.asarray(composed, dtype=np.uint8)
+                        return np.asarray(comp, dtype=np.uint8)
 
-                    if hasattr(looped_vc, "transform"):
-                        styled_clip = looped_vc.transform(transform_frame)
+                    styled = lvc.transform(frame_pipe) if hasattr(lvc, "transform") else lvc.fl(frame_pipe)
+                    if ac is not None:
+                        styled = set_aud(styled, ac)
+                    final_clips.append(styled)
+
+                full_vid = concatenate_videoclips(final_clips, method="compose")
+
+                if st.session_state.bgm_path and os.path.exists(st.session_state.bgm_path):
+                    bgm_raw = AudioFileClip(st.session_state.bgm_path)
+                    handles.append(bgm_raw)
+                    bgm_bed = vol_scale(loop_clip(bgm_raw, float(full_vid.duration or 4.0)), bgm_vol)
+                    if full_vid.audio is not None:
+                        full_vid = set_aud(full_vid, CompositeAudioClip([full_vid.audio, bgm_bed]))
                     else:
-                        styled_clip = looped_vc.fl(transform_frame)
+                        full_vid = set_aud(full_vid, bgm_bed)
 
-                    if vo_clip is not None:
-                        styled_clip = set_aud(styled_clip, vol_scale(vo_clip, st.session_state.voice_volume))
-                    scene_final_clips.append(styled_clip)
-
-                full_reel = concatenate_videoclips(scene_final_clips, method="compose")
-
-                if st.session_state.bgm_audio_path and os.path.exists(st.session_state.bgm_audio_path):
-                    bgm_raw = AudioFileClip(st.session_state.bgm_audio_path)
-                    open_handles.append(bgm_raw)
-                    bgm_bed = vol_scale(loop_clip(bgm_raw, float(full_reel.duration or 4.0)), st.session_state.bgm_volume)
-                    if full_reel.audio is not None:
-                        full_reel = set_aud(full_reel, CompositeAudioClip([full_reel.audio, bgm_bed]))
-                    else:
-                        full_reel = set_aud(full_reel, bgm_bed)
-
-                full_reel.write_videofile(
-                    out_final,
+                full_vid.write_videofile(
+                    final_out,
                     fps=ANIMATION_FPS,
                     codec="libx264",
                     audio_codec="aac",
                     ffmpeg_params=["-crf", "19", "-preset", "veryfast", "-pix_fmt", "yuv420p"],
                     logger=None,
                 )
-
-                for h in open_handles:
+                for h in handles:
                     try:
                         h.close()
                     except Exception:
                         pass
 
-            st.success("Your Reel is ready!")
-            st.video(out_final)
-            with open(out_final, "rb") as f:
+            st.success("Reel rendered successfully!")
+            st.video(final_out)
+            with open(final_out, "rb") as f:
                 st.download_button(
-                    "⬇️ Download Final MP4",
+                    "⬇️ Download Final Reel MP4",
                     data=f.read(),
-                    file_name=os.path.basename(out_final),
+                    file_name=os.path.basename(final_out),
                     mime="video/mp4",
                     use_container_width=True,
                 )
