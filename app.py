@@ -42,6 +42,8 @@ for key, default in [
     ),
     ("lock_character_enabled", True),
     ("kannada_subtitles", {}),
+    ("populated_script_lines", []),
+    ("populated_script_lang", "English"),
 ]:
     if key not in st.session_state:
         st.session_state[key] = default
@@ -147,6 +149,32 @@ def translate_lines_to_kannada(gemini_key, lines):
         except Exception:
             continue
     return lines
+
+
+def get_script_lines_for_language(scenes, script_lang="English", gemini_key=""):
+    """Extract English or Kannada script lines per scene, translating if Kannada isn't written yet."""
+    if not scenes:
+        return []
+
+    en_lines = [(s.get("narration") or f"Scene {i + 1}.").strip() for i, s in enumerate(scenes)]
+    if script_lang != "Kannada":
+        return en_lines
+
+    kn_lines = [(s.get("kannada_narration") or "").strip() for s in scenes]
+    missing_indices = [i for i, line in enumerate(kn_lines) if not line]
+
+    if missing_indices and gemini_key and gemini_key.strip():
+        to_translate = [en_lines[i] for i in missing_indices]
+        translated = translate_lines_to_kannada(gemini_key, to_translate)
+        for idx_pos, scene_idx in enumerate(missing_indices):
+            if idx_pos < len(translated) and translated[idx_pos]:
+                kn_lines[scene_idx] = translated[idx_pos]
+                scenes[scene_idx]["kannada_narration"] = translated[idx_pos]
+
+    return [
+        kn_lines[i] if kn_lines[i] else en_lines[i]
+        for i in range(len(scenes))
+    ]
 
 
 def compute_audio_envelope(audio_path, num_steps):
@@ -502,7 +530,7 @@ def generate_real_ai_scene(
 
 
 st.title("🎬 AI Animated Story Studio")
-st.caption("Locked character prompts, character reference upload, interactive editing area, voiceovers, character motion & lip-sync, and MP4 export.")
+st.caption("Locked character prompts, character reference upload, interactive English & Kannada story editor, voiceovers, character motion & lip-sync, and MP4 export.")
 
 with st.sidebar:
     st.header("🔑 Studio Settings")
@@ -543,9 +571,9 @@ tab1, tab2, tab3, tab4 = st.tabs([
     "4️⃣ Render & Download",
 ])
 
-# --- TAB 1: SCRIPT WRITER & INTERACTIVE EDITING AREA ---
+# --- TAB 1: SCRIPT WRITER & INTERACTIVE EDITING AREA (ENGLISH + KANNADA) ---
 with tab1:
-    st.subheader("Write Your Rough Idea & Edit Scenes")
+    st.subheader("Write Your Rough Idea & Edit English / Kannada Script")
     rough_story = st.text_area(
         "Type your rough story in any style (even broken sentences):",
         placeholder="e.g., 4 hostel boys walk near a forest village, a giant bear appears, two climb a tree, one lies still holding breath, and learns who a true friend is.",
@@ -572,7 +600,8 @@ with tab1:
             Fix and rewrite this rough story into an engaging {num_scenes}-scene story script.{char_context}
             Return ONLY valid JSON as a list of objects, with no markdown formatting.
             Each object must have:
-            - "narration": clear, emotional voiceover text (1-2 sentences)
+            - "narration": clear, emotional English voiceover text (1-2 sentences)
+            - "kannada_narration": natural, clear Kannada translation/script of that scene's voiceover (1-2 sentences)
             - "visual": detailed visual action description for that scene (action, setting, lighting, composition)
             Rough story: {rough_story.strip()}
             """
@@ -580,7 +609,7 @@ with tab1:
             last_exc = None
             parsed_scenes = None
 
-            with st.spinner("Polishing grammar and structuring scenes..."):
+            with st.spinner("Polishing English & Kannada story scripts..."):
                 for model_name in fallback_models:
                     for attempt in range(2):
                         try:
@@ -614,40 +643,45 @@ with tab1:
                 st.session_state.scenes = [
                     {
                         "narration": str(item.get("narration", "")).strip(),
+                        "kannada_narration": str(item.get("kannada_narration", "")).strip(),
                         "visual": str(item.get("visual", "")).strip(),
                     }
                     for item in parsed_scenes
                 ]
-                st.session_state.kannada_subtitles = {}
-                st.success("Script ready! Edit any scene below or move to Tab 2.")
+                st.session_state.kannada_subtitles = {
+                    idx: sc["kannada_narration"]
+                    for idx, sc in enumerate(st.session_state.scenes)
+                    if sc["kannada_narration"]
+                }
+                st.success("English & Kannada scripts ready! Edit any scene below or move to Tab 2.")
             else:
                 st.error(f"Could not generate script after retries/fallbacks: {last_exc}")
 
     if st.session_state.scenes:
-        st.markdown("### ✏️ Interactive Scene & Subtitle Editing Area")
+        st.markdown("### ✏️ Interactive Story Editor (English Script, Kannada Script & Visuals)")
         for i, scene in enumerate(st.session_state.scenes):
             with st.expander(f"Scene {i + 1} Editor", expanded=True):
                 col_a, col_b = st.columns(2)
                 with col_a:
                     scene["narration"] = st.text_area(
-                        f"Scene {i + 1} Narration (English / Voiceover)",
-                        value=scene["narration"],
+                        f"Scene {i + 1} English Script / Narration",
+                        value=scene.get("narration", ""),
                         key=f"nar_{i}",
                     )
                     scene["visual"] = st.text_input(
                         f"Scene {i + 1} Action / Camera Visual",
-                        value=scene["visual"],
+                        value=scene.get("visual", ""),
                         key=f"vis_{i}",
                     )
                 with col_b:
-                    kn_default = st.session_state.kannada_subtitles.get(i, "")
-                    kn_edited = st.text_area(
-                        f"Scene {i + 1} Kannada Subtitle Override (optional)",
-                        value=kn_default,
-                        placeholder="Leave blank to auto-translate narration to Kannada when rendering",
-                        key=f"kn_sub_{i}",
+                    kn_script_val = st.text_area(
+                        f"Scene {i + 1} Kannada Script (ಕನ್ನಡ ಕಥೆ)",
+                        value=scene.get("kannada_narration", ""),
+                        placeholder="Enter or edit Kannada script for Scene %d" % (i + 1),
+                        key=f"kn_script_{i}",
                     )
-                    st.session_state.kannada_subtitles[i] = kn_edited
+                    scene["kannada_narration"] = kn_script_val
+                    st.session_state.kannada_subtitles[i] = kn_script_val
 
 # --- TAB 2: CHARACTER REFERENCE & REALISTIC AI SCENES ---
 with tab2:
@@ -694,6 +728,7 @@ with tab2:
             active_scenes = [
                 {
                     "narration": f"Scene {i + 1} narration.",
+                    "kannada_narration": "",
                     "visual": default_actions[i % len(default_actions)],
                 }
                 for i in range(scene_count_fallback)
@@ -761,7 +796,7 @@ with tab2:
 
 # --- TAB 3: VOICE & SOUND ---
 with tab3:
-    st.subheader("Select Narrator Voice (English, Kannada Male/Female, or Your Own Voice)")
+    st.subheader("Select Narrator Voice & Script Language (English or Kannada)")
     voice_map = {
         "Warm Male Storyteller (US)": ("en-US-ChristopherNeural", "English"),
         "Expressive Female Storyteller (US)": ("en-US-AriaNeural", "English"),
@@ -772,8 +807,49 @@ with tab3:
         "British Documentary Male": ("en-GB-RyanNeural", "English"),
         "My Own Voice (Upload Recording)": (None, "Custom"),
     }
-    selected_voice = st.selectbox("Voice Options", list(voice_map.keys()))
-    voice_id, voice_lang = voice_map[selected_voice]
+
+    vc1, vc2 = st.columns(2)
+    with vc1:
+        selected_voice = st.selectbox("Voice Options", list(voice_map.keys()))
+        voice_id, voice_lang = voice_map[selected_voice]
+    with vc2:
+        default_script_choice = 1 if voice_lang == "Kannada" else 0
+        selected_script_lang = st.selectbox(
+            "Script Language to Populate & Read",
+            ["English", "Kannada"],
+            index=default_script_choice,
+        )
+
+    if st.button("📥 Populate Selected Script Lines"):
+        if not st.session_state.scenes:
+            st.warning("Create or edit scenes in Tab 1 first.")
+        else:
+            with st.spinner(f"Populating {selected_script_lang} script lines..."):
+                st.session_state.populated_script_lines = get_script_lines_for_language(
+                    st.session_state.scenes,
+                    script_lang=selected_script_lang,
+                    gemini_key=api_key,
+                )
+                st.session_state.populated_script_lang = selected_script_lang
+            st.success(f"Populated {len(st.session_state.populated_script_lines)} {selected_script_lang} script line(s).")
+
+    active_script_lines = (
+        st.session_state.populated_script_lines
+        if (
+            st.session_state.populated_script_lines
+            and st.session_state.populated_script_lang == selected_script_lang
+        )
+        else get_script_lines_for_language(
+            st.session_state.scenes,
+            script_lang=selected_script_lang,
+            gemini_key=api_key,
+        )
+    )
+
+    if active_script_lines:
+        st.markdown(f"**Active {selected_script_lang} Script Lines:**")
+        for s_idx, s_line in enumerate(active_script_lines):
+            st.write(f"**Scene {s_idx + 1} ({selected_script_lang}):** {s_line}")
 
     async def make_audio(text, voice, filename):
         communicate = edge_tts.Communicate(text, voice)
@@ -784,9 +860,13 @@ with tab3:
             try:
                 with st.spinner("Generating voice sample..."):
                     sample_text = (
-                        "ಒಂದು ಕಾಲದಲ್ಲಿ, ಒಂದು ಸಣ್ಣ ಕಿಡಿ ಎಲ್ಲವನ್ನೂ ಬದಲಾಯಿಸಿತು."
-                        if voice_lang == "Kannada"
-                        else "Once upon a time, a small spark changed everything."
+                        active_script_lines[0]
+                        if active_script_lines
+                        else (
+                            "ಒಂದು ಕಾಲದಲ್ಲಿ, ಒಂದು ಸಣ್ಣ ಕಿಡಿ ಎಲ್ಲವನ್ನೂ ಬದಲಾಯಿಸಿತು."
+                            if selected_script_lang == "Kannada"
+                            else "Once upon a time, a small spark changed everything."
+                        )
                     )
                     run_async(make_audio(sample_text, voice_id, "sample.mp3"))
                 st.audio("sample.mp3")
@@ -794,38 +874,18 @@ with tab3:
                 st.error(f"Could not generate sample audio: {exc}")
 
         if st.button("🔊 Generate Full Story Narration", type="primary"):
-            if not st.session_state.scenes:
+            if not active_script_lines:
                 st.warning("Generate your script in Tab 1 first.")
             else:
                 try:
-                    raw_lines = [
-                        (s.get("narration") or f"Scene {idx + 1}.").strip()
-                        for idx, s in enumerate(st.session_state.scenes)
-                    ]
-                    spoken_lines = raw_lines
-                    if voice_lang == "Kannada":
-                        custom_kn = [
-                            st.session_state.kannada_subtitles.get(i, "").strip()
-                            for i in range(len(raw_lines))
-                        ]
-                        if all(custom_kn):
-                            spoken_lines = custom_kn
-                        elif api_key and api_key.strip():
-                            with st.spinner("Translating scene narration to Kannada & generating voiceovers..."):
-                                translated = translate_lines_to_kannada(api_key, raw_lines)
-                                spoken_lines = [
-                                    custom_kn[i] if custom_kn[i] else translated[i]
-                                    for i in range(len(raw_lines))
-                                ]
-
                     st.session_state.audio_files = []
                     progress = st.progress(0)
-                    for idx, line_text in enumerate(spoken_lines):
+                    for idx, line_text in enumerate(active_script_lines):
                         aud_path = f"voice_{idx}.mp3"
                         run_async(make_audio(line_text, voice_id, aud_path))
                         st.session_state.audio_files.append(aud_path)
-                        progress.progress((idx + 1) / len(spoken_lines))
-                    st.success("All voiceovers recorded! Go to Tab 4 to render.")
+                        progress.progress((idx + 1) / len(active_script_lines))
+                    st.success(f"Generated {len(st.session_state.audio_files)} {selected_script_lang} voiceover(s)! Go to Tab 4 to render.")
                 except Exception as exc:
                     st.error(f"Error generating narration audio: {exc}")
     else:
@@ -884,24 +944,24 @@ with tab3:
     st.divider()
     st.markdown("### 📋 My Own Voice — Separate Script & Recording Table")
     st.caption(
-        "Read each scene's script line below, record with your microphone (or upload a clip per row), preview it, and click Save My Voice Table."
+        f"Currently showing **{selected_script_lang}** script lines to read. Record with your microphone (or upload a clip per row), preview it, and click Save My Voice Table."
     )
 
-    table_scenes = (
-        st.session_state.scenes
-        if st.session_state.scenes
-        else [
-            {"narration": f"Scene {i + 1} script line to read aloud.", "visual": ""}
-            for i in range(max(len(st.session_state.images), 4))
-        ]
-    )
-
+    table_count = max(len(active_script_lines), len(st.session_state.scenes), len(st.session_state.images), 4)
     os.makedirs("own_voice_table", exist_ok=True)
     draft_rows = []
 
-    for idx, sc in enumerate(table_scenes):
-        line_to_read = (sc.get("narration") or f"Scene {idx + 1}.").strip()
-        kn_hint = st.session_state.kannada_subtitles.get(idx, "").strip()
+    for idx in range(table_count):
+        if idx < len(active_script_lines):
+            line_to_read = active_script_lines[idx]
+        elif idx < len(st.session_state.scenes):
+            line_to_read = (
+                st.session_state.scenes[idx].get("kannada_narration")
+                if selected_script_lang == "Kannada"
+                else st.session_state.scenes[idx].get("narration")
+            ) or f"Scene {idx + 1}."
+        else:
+            line_to_read = f"Scene {idx + 1} script line to read aloud."
 
         row_c1, row_c2, row_c3, row_c4 = st.columns([0.9, 2.4, 2.1, 1.6])
         with row_c1:
@@ -910,10 +970,8 @@ with tab3:
             st.caption("✅ Saved" if existing_path and os.path.exists(existing_path) else "⏳ Pending")
 
         with row_c2:
-            st.markdown("**Read This Script:**")
+            st.markdown(f"**Read This ({selected_script_lang}) Script:**")
             st.write(line_to_read)
-            if kn_hint:
-                st.caption(f"ಕನ್ನಡ: {kn_hint}")
 
         with row_c3:
             mic_val = None
@@ -1010,37 +1068,23 @@ with tab4:
                 with st.spinner(
                     "Animating characters, syncing speech cadence, rendering subtitles, and exporting MP4..."
                 ):
-                    raw_lines = [
-                        (s.get("narration") or f"Scene {idx + 1}").strip()
-                        for idx, s in enumerate(st.session_state.scenes)
-                    ]
-                    while len(raw_lines) < len(st.session_state.audio_files):
-                        raw_lines.append(f"Scene {len(raw_lines) + 1}")
-
                     if subtitle_lang == "Kannada":
-                        custom_kn = [
-                            st.session_state.kannada_subtitles.get(i, "").strip()
-                            for i in range(len(raw_lines))
-                        ]
-                        if api_key and api_key.strip():
-                            translated = translate_lines_to_kannada(api_key, raw_lines)
-                            sub_lines = [
-                                custom_kn[i] if custom_kn[i] else translated[i]
-                                for i in range(len(raw_lines))
-                            ]
-                        else:
-                            sub_lines = [
-                                custom_kn[i] if custom_kn[i] else raw_lines[i]
-                                for i in range(len(raw_lines))
-                            ]
-                            if not any(custom_kn):
-                                st.warning(
-                                    "Add a Gemini API Key in the sidebar or enter Kannada text in Tab 1's Scene Editor for Kannada subtitles."
-                                )
+                        sub_lines = get_script_lines_for_language(
+                            st.session_state.scenes,
+                            script_lang="Kannada",
+                            gemini_key=api_key,
+                        )
                     elif subtitle_lang == "English":
-                        sub_lines = raw_lines
+                        sub_lines = get_script_lines_for_language(
+                            st.session_state.scenes,
+                            script_lang="English",
+                            gemini_key=api_key,
+                        )
                     else:
                         sub_lines = [""] * len(st.session_state.audio_files)
+
+                    while len(sub_lines) < len(st.session_state.audio_files):
+                        sub_lines.append("")
 
                     for i, aud_p in enumerate(st.session_state.audio_files):
                         if i >= len(st.session_state.images):
