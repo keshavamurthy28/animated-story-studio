@@ -287,6 +287,29 @@ for key, default in [
 def sync_scene_widget_states(scenes_list):
     """Push scene list fields into Streamlit widget keys cleanly."""
     for idx, sc in enumerate(scenes_list):
+        if f"nar_{idx}" not in st.session_state:
+            st.session_state[f"nar_{idx}"] = sc.get("narration", "")
+        if f"kn_script_{idx}" not in st.session_state:
+            st.session_state[f"kn_script_{idx}"] = sc.get("kannada_narration", "")
+        if f"vis_{idx}" not in st.session_state:
+            st.session_state[f"vis_{idx}"] = sc.get("visual", "")
+        if f"emo_{idx}" not in st.session_state:
+            st.session_state[f"emo_{idx}"] = sc.get("emotion", "Expressive")
+        if f"mot_{idx}" not in st.session_state:
+            st.session_state[f"mot_{idx}"] = sc.get("motion", "Auto Alternate")
+        if f"broll_{idx}" not in st.session_state:
+            st.session_state[f"broll_{idx}"] = sc.get("suggested_broll", "Establishing cinematic B-roll shot")
+        if f"sfx_sug_{idx}" not in st.session_state:
+            st.session_state[f"sfx_sug_{idx}"] = sc.get("suggested_sfx", "None")
+        if f"fx_sc_{idx}" not in st.session_state:
+            st.session_state[f"fx_sc_{idx}"] = st.session_state.scene_fx_overrides.get(
+                idx, sc.get("suggested_fx", "None")
+            )
+
+
+def force_sync_scene_widget_states(scenes_list):
+    """Force-overwrite scene widget states (used after undo/redo/generate/reorder)."""
+    for idx, sc in enumerate(scenes_list):
         st.session_state[f"nar_{idx}"] = sc.get("narration", "")
         st.session_state[f"kn_script_{idx}"] = sc.get("kannada_narration", "")
         st.session_state[f"vis_{idx}"] = sc.get("visual", "")
@@ -344,12 +367,12 @@ def _capture_snapshot(action_label="Edit"):
 
 
 def _apply_snapshot(snap):
-    """Restore a snapshot into st.session_state and sync widget keys."""
+    """Restore a snapshot into st.session_state and force-sync widget keys."""
     for k, v in snap.items():
         if k == "label":
             continue
         st.session_state[k] = copy.deepcopy(v)
-    sync_scene_widget_states(st.session_state.scenes)
+    force_sync_scene_widget_states(st.session_state.scenes)
 
 
 def record_undo_step(action_label="Edit"):
@@ -571,7 +594,7 @@ def swap_scenes_and_media(idx_a, idx_b):
         fx_map.pop(idx_b, None)
     st.session_state.scene_fx_overrides = fx_map
 
-    sync_scene_widget_states(st.session_state.scenes)
+    force_sync_scene_widget_states(st.session_state.scenes)
 
 
 def run_async(coro):
@@ -646,7 +669,7 @@ def get_video_duration_safe(video_path):
 
 
 def trim_video_clip_file(src_path, out_path, start_sec, end_sec):
-    """Trim [start_sec, end_sec] from a video clip and save to out_path."""
+    """Trim [start_sec, end_sec] from a video clip and save to out_path using fast preset."""
     src = None
     seg = None
     try:
@@ -658,7 +681,7 @@ def trim_video_clip_file(src_path, out_path, start_sec, end_sec):
             codec="libx264",
             audio_codec="aac" if src.audio is not None else None,
             audio=src.audio is not None,
-            ffmpeg_params=["-crf", "18", "-preset", "medium", "-pix_fmt", "yuv420p"],
+            ffmpeg_params=["-crf", "21", "-preset", "veryfast", "-pix_fmt", "yuv420p"],
             logger=None,
         )
         return out_path
@@ -672,7 +695,7 @@ def trim_video_clip_file(src_path, out_path, start_sec, end_sec):
 
 
 def split_video_clip_file(src_path, split_sec, part_a_path, part_b_path):
-    """Split a video clip at split_sec into two separate MP4 files."""
+    """Split a video clip at split_sec into two separate MP4 files using fast preset."""
     src = None
     part_a = None
     part_b = None
@@ -690,7 +713,7 @@ def split_video_clip_file(src_path, split_sec, part_a_path, part_b_path):
             codec="libx264",
             audio_codec="aac" if src.audio is not None else None,
             audio=src.audio is not None,
-            ffmpeg_params=["-crf", "18", "-preset", "medium", "-pix_fmt", "yuv420p"],
+            ffmpeg_params=["-crf", "21", "-preset", "veryfast", "-pix_fmt", "yuv420p"],
             logger=None,
         )
 
@@ -701,7 +724,7 @@ def split_video_clip_file(src_path, split_sec, part_a_path, part_b_path):
             codec="libx264",
             audio_codec="aac" if src.audio is not None else None,
             audio=src.audio is not None,
-            ffmpeg_params=["-crf", "18", "-preset", "medium", "-pix_fmt", "yuv420p"],
+            ffmpeg_params=["-crf", "21", "-preset", "veryfast", "-pix_fmt", "yuv420p"],
             logger=None,
         )
         return part_a_path, part_b_path
@@ -728,7 +751,7 @@ def ensure_exact_size(pil_img, target_w, target_h, bg_mode="Blur Canvas"):
         bg = rgb.resize((bg_w, bg_h), resampling)
         bx = max(0, (bg_w - target_w) // 2)
         by = max(0, (bg_h - target_h) // 2)
-        bg = bg.crop((bx, by, bx + target_w, by + target_h)).filter(ImageFilter.GaussianBlur(radius=16))
+        bg = bg.crop((bx, by, bx + target_w, by + target_h)).filter(ImageFilter.GaussianBlur(radius=14))
         bg = ImageEnhance.Brightness(bg).enhance(0.62)
 
         fg_scale = min(target_w / max(1, rgb.width), target_h / max(1, rgb.height))
@@ -796,8 +819,9 @@ def apply_pil_effects(
     return out
 
 
+@st.cache_data(show_spinner=False)
 def download_fx_audio(fx_name, fx_url):
-    """Download and cache preset audio effects locally."""
+    """Download and cache preset audio effects locally across reruns."""
     if not fx_url or fx_name == "None":
         return None
     os.makedirs("fx_audio_cache", exist_ok=True)
@@ -820,8 +844,8 @@ def _is_valid_font_file(path):
     return os.path.exists(path) and os.path.isfile(path) and os.path.getsize(path) > 40000
 
 
-def _find_font(font_size, lang="English"):
-    """Load a suitable TrueType font for English or Kannada, fetching Noto Sans Kannada if needed."""
+def _resolve_font_path(lang="English"):
+    """Find or download a TrueType font path once per language."""
     if lang == "Kannada":
         kannada_candidates = [
             "fonts/NotoSansKannada-Regular.ttf",
@@ -836,10 +860,7 @@ def _find_font(font_size, lang="English"):
         ]
         for path in kannada_candidates:
             if _is_valid_font_file(path):
-                try:
-                    return ImageFont.truetype(path, font_size), path
-                except Exception:
-                    pass
+                return path
 
         tmp_font = "/tmp/NotoSansKannada-Regular.ttf"
         font_urls = [
@@ -853,7 +874,7 @@ def _find_font(font_size, lang="English"):
                     with open(tmp_font, "wb") as f:
                         f.write(r.content)
                     if _is_valid_font_file(tmp_font):
-                        return ImageFont.truetype(tmp_font, font_size), tmp_font
+                        return tmp_font
             except Exception:
                 continue
 
@@ -865,11 +886,24 @@ def _find_font(font_size, lang="English"):
     ]
     for path in fallback_candidates:
         if os.path.exists(path):
-            try:
-                return ImageFont.truetype(path, font_size), path
-            except Exception:
-                pass
+            return path
+    return ""
+
+
+@st.cache_resource(show_spinner=False)
+def _cached_font(font_size: int, lang: str = "English"):
+    """Cache loaded Pillow ImageFont objects in memory across reruns and frames."""
+    font_path = _resolve_font_path(lang=lang)
+    if font_path:
+        try:
+            return ImageFont.truetype(font_path, int(font_size)), font_path
+        except Exception:
+            pass
     return ImageFont.load_default(), "default_bitmap"
+
+
+def _find_font(font_size, lang="English"):
+    return _cached_font(int(font_size), lang=lang)
 
 
 def translate_lines_to_kannada(gemini_key, lines):
@@ -1199,7 +1233,7 @@ def build_motion_clip(
     video_fx="None",
     bg_mode="Blur Canvas",
 ):
-    """Smooth, high-sharpness 24-fps motion clip using lossless PNG frames."""
+    """In-memory motion clip generator (avoids per-frame PNG disk writes and lowers step overhead)."""
     resampling = getattr(Image, "Resampling", Image).LANCZOS
     modes = ["Zoom In", "Pan Right", "Zoom Out", "Pan Left"]
     active_mode = modes[scene_idx % len(modes)] if motion_mode == "Auto Alternate" else motion_mode
@@ -1213,11 +1247,10 @@ def build_motion_clip(
         canvas_np = np.asarray(exact_base, dtype=np.uint8)
 
     safe_dur = max(float(duration), 0.5)
-    num_steps = max(12, min(48, int(round(safe_dur * 12))))
+    num_steps = max(6, min(18, int(round(safe_dur * 5))))
     step_dur = safe_dur / num_steps
     subclips = []
 
-    os.makedirs("motion_frames", exist_ok=True)
     for s_idx in range(num_steps):
         progress = s_idx / max(1, num_steps - 1)
         ease = progress * progress * (3.0 - 2.0 * progress)
@@ -1279,9 +1312,7 @@ def build_motion_clip(
             )
 
         frame_pil = ensure_exact_size(frame_pil, target_w, target_h, bg_mode="Crop Fill")
-        frame_path = os.path.join("motion_frames", f"s{scene_idx}_f{s_idx}.png")
-        frame_pil.save(frame_path, format="PNG")
-        subclips.append(apply_duration(ImageClip(frame_path), step_dur))
+        subclips.append(apply_duration(ImageClip(np.asarray(frame_pil, dtype=np.uint8)), step_dur))
 
     return concatenate_videoclips(subclips, method="chain")
 
@@ -1306,7 +1337,7 @@ def render_single_scene_video(
     video_fx="None",
     bg_mode="Blur Canvas",
 ):
-    """Render a crisp 24-fps MP4 scene clip."""
+    """Render a scene MP4 using veryfast preset for quick iteration."""
     clip = build_motion_clip(
         img_path=img_path,
         target_w=target_w,
@@ -1332,7 +1363,7 @@ def render_single_scene_video(
             fps=24,
             codec="libx264",
             audio=False,
-            ffmpeg_params=["-crf", "18", "-preset", "medium", "-pix_fmt", "yuv420p"],
+            ffmpeg_params=["-crf", "21", "-preset", "veryfast", "-pix_fmt", "yuv420p"],
             logger=None,
         )
         return out_path
@@ -1360,7 +1391,7 @@ def build_uploaded_video_clip(
     video_fx="None",
     bg_mode="Blur Canvas",
 ):
-    """Process an existing video clip so canvas size, color/FX, and subtitles stay consistent."""
+    """Process an existing video clip in memory so canvas size, color/FX, and subtitles stay consistent."""
     src = None
     try:
         src = VideoFileClip(vid_path)
@@ -1385,14 +1416,16 @@ def build_uploaded_video_clip(
         if not needs_visual_pass:
             return timed, [src]
 
-        os.makedirs("video_passes", exist_ok=True)
-        step_dt = 0.25
-        n_steps = max(4, min(40, int(math.ceil(clip_dur / step_dt))))
+        step_dt = 0.4
+        n_steps = max(3, min(18, int(math.ceil(clip_dur / step_dt))))
         actual_step = clip_dur / n_steps
         step_clips = []
 
         for idx_f in range(n_steps):
-            sample_t = min(max(0.0, (idx_f + 0.5) * actual_step), max(0.0, float(timed.duration or clip_dur) - 0.02))
+            sample_t = min(
+                max(0.0, (idx_f + 0.5) * actual_step),
+                max(0.0, float(timed.duration or clip_dur) - 0.02),
+            )
             frame_arr = timed.get_frame(sample_t)
             pil_f = Image.fromarray(np.asarray(frame_arr, dtype=np.uint8))
             pil_f = ensure_exact_size(pil_f, target_w, target_h, bg_mode=bg_mode)
@@ -1414,9 +1447,7 @@ def build_uploaded_video_clip(
                     position=subtitle_pos,
                     scale=subtitle_scale,
                 )
-            p_f = os.path.join("video_passes", f"vp_{scene_idx}_{idx_f}.png")
-            pil_f.save(p_f, format="PNG")
-            step_clips.append(apply_duration(ImageClip(p_f), actual_step))
+            step_clips.append(apply_duration(ImageClip(np.asarray(pil_f, dtype=np.uint8)), actual_step))
 
         merged = concatenate_videoclips(step_clips, method="chain")
         if timed.audio is not None:
@@ -1978,7 +2009,7 @@ def import_project_json(raw_json_str):
 
     if isinstance(data.get("scenes"), list) and len(data["scenes"]) > 0:
         st.session_state.scenes = data["scenes"][:10]
-        sync_scene_widget_states(st.session_state.scenes)
+        force_sync_scene_widget_states(st.session_state.scenes)
 
 
 # --- TOP STUDIO BANNER + 3-STEP UNDO / REDO BAR ---
@@ -1989,7 +2020,7 @@ st.markdown(
             <span class="studio-pill">AI STUDIO PRO</span>
             <span style="font-weight:700;font-size:17px;">Movie, Shorts & Reels Creation Suite</span>
         </div>
-        <div class="studio-sub">3-Step Undo / Redo • Unlimited Photos & Videos • Custom Arrangement & Wordings</div>
+        <div class="studio-sub">3-Step Undo / Redo • Unlimited Photos & Videos • Fast In-Memory Render</div>
     </div>
     """,
     unsafe_allow_html=True,
@@ -2537,7 +2568,7 @@ with tab1:
                     p_auto_sfx = download_fx_audio(sc["suggested_sfx"], PRESET_AUDIO_EFFECTS.get(sc["suggested_sfx"], ""))
                     if p_auto_sfx:
                         st.session_state.scene_audio_fx[idx] = p_auto_sfx
-            sync_scene_widget_states(st.session_state.scenes)
+            force_sync_scene_widget_states(st.session_state.scenes)
             st.success(f"Created {len(st.session_state.scenes)} smart scenes with AI B-roll, motion & FX suggestions.")
             st.rerun()
         else:
@@ -2620,7 +2651,7 @@ with tab1:
                 )
                 for idx, sc in enumerate(st.session_state.scenes):
                     st.session_state.scene_fx_overrides[idx] = sc.get("suggested_fx", "None")
-                sync_scene_widget_states(st.session_state.scenes)
+                force_sync_scene_widget_states(st.session_state.scenes)
                 st.success(f"Generated {len(st.session_state.scenes)} AI-directed scenes!")
                 st.rerun()
             else:
@@ -2629,7 +2660,7 @@ with tab1:
                 )
                 for idx, sc in enumerate(st.session_state.scenes):
                     st.session_state.scene_fx_overrides[idx] = sc.get("suggested_fx", "None")
-                sync_scene_widget_states(st.session_state.scenes)
+                force_sync_scene_widget_states(st.session_state.scenes)
                 st.warning(f"Used smart local scene builder ({last_exc}).")
                 st.rerun()
 
@@ -2644,7 +2675,7 @@ with tab1:
                     p_sfx = download_fx_audio(sc["suggested_sfx"], PRESET_AUDIO_EFFECTS.get(sc["suggested_sfx"], ""))
                     if p_sfx:
                         st.session_state.scene_audio_fx[idx] = p_sfx
-            sync_scene_widget_states(suggested_list)
+            force_sync_scene_widget_states(suggested_list)
         st.success("Applied AI B-roll, motion, video FX & sound FX suggestions across all scenes!")
         st.rerun()
 
@@ -2862,6 +2893,7 @@ with tab2:
                     sc["narration"] = custom_lines[idx]
 
         st.session_state.scenes = active_scenes
+        force_sync_scene_widget_states(active_scenes)
         scene_subtitles = (
             get_script_lines_for_language(active_scenes, script_lang=tab2_sub_lang, gemini_key=api_key)
             if tab2_sub_lang != "None"
@@ -2995,17 +3027,19 @@ with tab3:
         comm = edge_tts.Communicate(txt, v_name)
         await comm.save(out_file)
 
+    async def synth_tts_batch(lines, v_name):
+        out_paths = [f"voice_{idx}.mp3" for idx in range(len(lines))]
+        tasks = [synth_tts(line, v_name, out_paths[idx]) for idx, line in enumerate(lines)]
+        await asyncio.gather(*tasks)
+        return out_paths
+
     if st.button("🔊 Generate Voiceover for All Scenes", type="primary"):
         record_undo_step("Generate Voiceover")
         try:
-            st.session_state.audio_files = []
-            prog_a = st.progress(0)
-            for idx, line in enumerate(lines_to_speak):
-                ap = f"voice_{idx}.mp3"
-                run_async(synth_tts(line, v_id, ap))
-                st.session_state.audio_files.append(ap)
-                prog_a.progress((idx + 1) / max(1, len(lines_to_speak)))
-            st.success(f"Generated {len(st.session_state.audio_files)} voiceover clip(s).")
+            with st.spinner(f"Synthesizing {len(lines_to_speak)} voiceovers in parallel..."):
+                generated_paths = run_async(synth_tts_batch(lines_to_speak, v_id))
+            st.session_state.audio_files = generated_paths
+            st.success(f"Generated {len(st.session_state.audio_files)} voiceover clip(s) in parallel.")
         except Exception as exc:
             st.error(f"Voiceover generation error: {exc}")
 
@@ -3204,7 +3238,7 @@ with tab4:
                         fps=24,
                         codec="libx264",
                         audio_codec="aac",
-                        ffmpeg_params=["-crf", "18", "-preset", "medium", "-pix_fmt", "yuv420p"],
+                        ffmpeg_params=["-crf", "18", "-preset", "veryfast", "-pix_fmt", "yuv420p"],
                         logger=None,
                     )
 
