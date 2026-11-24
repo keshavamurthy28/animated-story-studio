@@ -169,14 +169,8 @@ def generate_cloudflare_flux_image(cf_account_id, cf_api_token, prompt_text, tar
         "Authorization": f"Bearer {cf_api_token.strip()}",
         "Content-Type": "application/json",
     }
-
-    snap_w = max(256, min(1024, (int(target_w) // 8) * 8))
-    snap_h = max(256, min(1024, (int(target_h) // 8) * 8))
-
     payload = {
         "prompt": prompt_text,
-        "width": snap_w,
-        "height": snap_h,
     }
     resp = requests.post(url, headers=headers, json=payload, timeout=90)
     if not resp.ok:
