@@ -1,5 +1,6 @@
 streamlit
 google-genai
+huggingface_hub
 edge-tts
 moviepy
 Pillow
