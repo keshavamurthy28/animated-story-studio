@@ -3,15 +3,14 @@ import json
 import os
 import tempfile
 import time
-import urllib.parse
 from io import BytesIO
 
 import edge_tts
 import numpy as np
-import requests
 import streamlit as st
 from google import genai
 from google.genai import types
+from huggingface_hub import InferenceClient
 from PIL import Image, ImageDraw, ImageEnhance, ImageFilter
 
 try:
@@ -129,7 +128,7 @@ def build_motion_clip(img_path, target_w, target_h, duration, motion_mode="Auto 
 
 
 def modify_reference_into_scene(ref_pil, target_w, target_h, scene_idx, art_style):
-    """Adapt an uploaded reference image into a distinct scene frame with lighting/mood variation."""
+    """Adapt an uploaded reference image into a distinct scene frame."""
     resampling = getattr(Image, "Resampling", Image).LANCZOS
     base = ref_pil.convert("RGB")
     cover_scale = max(target_w / max(1, base.width), target_h / max(1, base.height))
@@ -146,201 +145,68 @@ def modify_reference_into_scene(ref_pil, target_w, target_h, scene_idx, art_styl
     framed = resized.crop((left, top, left + target_w, top + target_h))
 
     style_lower = (art_style or "").lower()
-    if "cartoon" in style_lower or "vector" in style_lower:
-        framed = ImageEnhance.Contrast(framed).enhance(1.18)
-        framed = ImageEnhance.Color(framed).enhance(1.28)
+    if "photorealistic" in style_lower or "cinematic" in style_lower:
+        framed = ImageEnhance.Contrast(framed).enhance(1.1)
+        framed = ImageEnhance.Color(framed).enhance(1.08)
     elif "ghibli" in style_lower or "watercolor" in style_lower:
         framed = framed.filter(ImageFilter.SMOOTH_MORE)
         framed = ImageEnhance.Color(framed).enhance(1.18)
-    elif "pixar" in style_lower or "3d" in style_lower:
-        framed = ImageEnhance.Contrast(framed).enhance(1.12)
-        framed = ImageEnhance.Color(framed).enhance(1.22)
     else:
-        framed = ImageEnhance.Contrast(framed).enhance(1.1)
+        framed = ImageEnhance.Contrast(framed).enhance(1.15)
+        framed = ImageEnhance.Color(framed).enhance(1.2)
 
-    mood_factors = [1.0, 1.05, 0.96, 1.04, 0.98, 1.06]
+    mood_factors = [1.0, 1.04, 0.96, 1.03, 0.98, 1.05]
     framed = ImageEnhance.Brightness(framed).enhance(mood_factors[scene_idx % len(mood_factors)])
     return framed.convert("RGB")
 
 
-def draw_cartoon_forest_and_characters(target_w, target_h, scene_idx, prompt_text):
-    """Draw a vibrant 2D cartoon forest scene with layered trees, sky gradient, and characters."""
-    # Vertical sky & sunlit forest gradient
-    top_sky = np.array([62, 168, 214], dtype=np.float32)
-    bot_sky = np.array([248, 226, 148], dtype=np.float32)
-    if scene_idx == 1:
-        top_sky = np.array([28, 72, 54], dtype=np.float32)
-        bot_sky = np.array([224, 118, 42], dtype=np.float32)
-    elif scene_idx == 2:
-        top_sky = np.array([58, 146, 92], dtype=np.float32)
-        bot_sky = np.array([154, 214, 118], dtype=np.float32)
-
+def make_local_scene_card(target_w, target_h, scene_idx, prompt_text):
+    """Local fallback card when no AI image quota/token is available."""
+    top_sky = np.array([48, 128, 178], dtype=np.float32)
+    bot_sky = np.array([228, 196, 128], dtype=np.float32)
     y_idx = np.linspace(0.0, 1.0, target_h)[:, None, None]
     grad = np.broadcast_to(top_sky * (1.0 - y_idx) + bot_sky * y_idx, (target_h, target_w, 3)).astype(np.uint8)
     img = Image.fromarray(grad, mode="RGB")
-    draw = ImageDraw.Draw(img, "RGBA")
-
-    ground_y = int(target_h * 0.74)
-
-    # Sunburst rays
-    sun_x, sun_y = int(target_w * 0.55), int(target_h * 0.36)
-    for r in range(180, 20, -25):
-        alpha = max(12, 75 - r // 3)
-        draw.ellipse([sun_x - r, sun_y - r, sun_x + r, sun_y + r], fill=(255, 245, 185, alpha))
-
-    # Distant pine silhouettes
-    for px in range(20, target_w + 60, 85):
-        base_y = ground_y - 30
-        draw.polygon(
-            [(px, base_y - 190), (px - 42, base_y), (px + 42, base_y)],
-            fill=(42, 92, 62, 210),
-        )
-
-    # Midground leafy & pine trees with trunks
-    tree_step = max(95, target_w // 6)
-    for idx_t, tx in enumerate(range(45, target_w + 40, tree_step)):
-        trunk_w = 18 if idx_t % 2 == 0 else 24
-        draw.rectangle(
-            [tx - trunk_w // 2, ground_y - 140, tx + trunk_w // 2, ground_y + 10],
-            fill=(86, 52, 28, 255),
-            outline=(38, 22, 12, 255),
-            width=2,
-        )
-        foliage_col = (58, 152, 68, 255) if idx_t % 2 == 0 else (44, 128, 56, 255)
-        for ox, oy, rad in [(-24, -145, 34), (24, -145, 34), (0, -172, 42), (0, -132, 36)]:
-            draw.ellipse(
-                [tx + ox - rad, ground_y + oy - rad, tx + ox + rad, ground_y + oy + rad],
-                fill=foliage_col,
-                outline=(26, 72, 34, 255),
-                width=2,
-            )
-
-    # Warm fire glow behind scene 1 (running/danger scene)
-    if scene_idx == 1:
-        for fx in range(80, target_w - 60, 110):
-            draw.polygon(
-                [(fx, ground_y - 120), (fx - 34, ground_y), (fx + 34, ground_y)],
-                fill=(255, 145, 24, 185),
-            )
-            draw.polygon(
-                [(fx, ground_y - 75), (fx - 18, ground_y), (fx + 18, ground_y)],
-                fill=(255, 225, 72, 210),
-            )
-
-    # Lush foreground ground & cliff/soil edge
-    draw.ellipse([-80, ground_y - 35, target_w + 80, ground_y + 75], fill=(92, 178, 64, 255))
-    draw.rectangle([0, ground_y + 20, target_w, target_h], fill=(74, 154, 52, 255))
-    soil_top = min(target_h - 40, ground_y + int(target_h * 0.13))
-    draw.rectangle([0, soil_top, target_w, target_h], fill=(142, 92, 52, 255))
-
-    # Expressive cartoon characters (4 boys of varied builds + giant bear)
-    p_low = (prompt_text or "").lower()
-    is_climbing_scene = ("climb" in p_low) or (scene_idx == 2)
-    is_lying_scene = ("breath" in p_low or "lie" in p_low or "still" in p_low) or (scene_idx == 2)
-
-    boy_palette = [
-        ("slim", 0.18, 18, 108, (64, 168, 72)),
-        ("lean", 0.30, 20, 114, (48, 162, 198)),
-        ("medium", 0.42, 22, 118, (242, 158, 48)),
-        ("fat", 0.55, 34, 112, (226, 86, 112)),
-    ]
-
-    for b_idx, (_btype, x_frac, half_w, h_px, tee_col) in enumerate(boy_palette):
-        bx = int(target_w * x_frac)
-        by = ground_y + 8
-
-        # Ground shadow
-        draw.ellipse([bx - half_w - 8, by - 6, bx + half_w + 8, by + 10], fill=(28, 68, 24, 130))
-
-        if is_climbing_scene and b_idx in (0, 1):
-            # Boy positioned higher up in tree foliage
-            by = ground_y - 125 - (b_idx * 24)
-        elif is_lying_scene and b_idx == 3:
-            # Boy lying flat on ground holding breath
-            draw.rounded_rectangle(
-                [bx - 42, ground_y - 14, bx + 42, ground_y + 8],
-                radius=10,
-                fill=tee_col,
-                outline=(32, 24, 18, 255),
-                width=2,
-            )
-            draw.ellipse(
-                [bx + 34, ground_y - 24, bx + 62, ground_y + 4],
-                fill=(252, 204, 158, 255),
-                outline=(32, 24, 18, 255),
-                width=2,
-            )
-            continue
-
-        # Legs & shoes
-        leg_h = max(24, h_px // 3)
-        draw.rectangle([bx - half_w + 4, by - leg_h, bx - 4, by], fill=(56, 74, 104, 255), outline=(28, 24, 18, 255), width=2)
-        draw.rectangle([bx + 4, by - leg_h, bx + half_w - 4, by], fill=(56, 74, 104, 255), outline=(28, 24, 18, 255), width=2)
-        draw.ellipse([bx - half_w, by - 8, bx - 2, by + 6], fill=(42, 48, 62, 255))
-        draw.ellipse([bx + 2, by - 8, bx + half_w, by + 6], fill=(42, 48, 62, 255))
-
-        # Cartoon torso
-        torso_top = by - h_px + 28
-        draw.rounded_rectangle(
-            [bx - half_w, torso_top, bx + half_w, by - leg_h + 4],
-            radius=14,
-            fill=tee_col,
-            outline=(28, 24, 18, 255),
-            width=2,
-        )
-
-        # Round cartoon head, ears, hair, eyes, and sweat drops when running/scared
-        head_r = 22
-        head_cy = torso_top - head_r + 2
-        draw.ellipse([bx - head_r - 5, head_cy - 5, bx - head_r + 4, head_cy + 7], fill=(252, 204, 158, 255), outline=(28, 24, 18, 255), width=2)
-        draw.ellipse([bx + head_r - 4, head_cy - 5, bx + head_r + 5, head_cy + 7], fill=(252, 204, 158, 255), outline=(28, 24, 18, 255), width=2)
-        draw.ellipse(
-            [bx - head_r, head_cy - head_r, bx + head_r, head_cy + head_r],
-            fill=(252, 204, 158, 255),
-            outline=(28, 24, 18, 255),
-            width=2,
-        )
-        draw.pieslice(
-            [bx - head_r, head_cy - head_r - 4, bx + head_r, head_cy + 4],
-            start=180,
-            end=360,
-            fill=(88, 52, 28, 255),
-        )
-        # Eyes
-        for ex in (bx - 8, bx + 8):
-            draw.ellipse([ex - 4, head_cy - 3, ex + 4, head_cy + 5], fill=(255, 255, 255, 255))
-            draw.ellipse([ex - 2, head_cy - 1, ex + 2, head_cy + 3], fill=(24, 24, 28, 255))
-
-        if scene_idx == 1:
-            # Sweat drop next to character
-            draw.ellipse([bx + head_r + 8, head_cy - 12, bx + head_r + 16, head_cy], fill=(110, 198, 255, 235))
-
-    # Giant bulky forest bear on the right
-    bear_x = int(target_w * 0.78)
-    bear_y = ground_y + 6
-    draw.ellipse([bear_x - 78, bear_y - 10, bear_x + 78, bear_y + 14], fill=(28, 68, 24, 140))
-
-    # Bear body & legs
-    draw.ellipse([bear_x - 66, bear_y - 118, bear_x + 66, bear_y - 16], fill=(122, 68, 34, 255), outline=(42, 22, 12, 255), width=3)
-    draw.rounded_rectangle([bear_x - 54, bear_y - 44, bear_x - 24, bear_y + 4], radius=10, fill=(108, 58, 28, 255), outline=(42, 22, 12, 255), width=2)
-    draw.rounded_rectangle([bear_x + 22, bear_y - 44, bear_x + 52, bear_y + 4], radius=10, fill=(108, 58, 28, 255), outline=(42, 22, 12, 255), width=2)
-
-    # Bear head, round ears, snout, and eyes
-    b_head_x, b_head_y = bear_x - 28, bear_y - 124
-    draw.ellipse([b_head_x - 42, b_head_y - 18, b_head_x - 16, b_head_y + 8], fill=(108, 58, 28, 255), outline=(42, 22, 12, 255), width=2)
-    draw.ellipse([b_head_x + 16, b_head_y - 18, b_head_x + 42, b_head_y + 8], fill=(108, 58, 28, 255), outline=(42, 22, 12, 255), width=2)
-    draw.ellipse([b_head_x - 36, b_head_y - 12, b_head_x + 36, b_head_y + 48], fill=(134, 76, 38, 255), outline=(42, 22, 12, 255), width=3)
-    draw.ellipse([b_head_x - 18, b_head_y + 10, b_head_x + 18, b_head_y + 38], fill=(238, 178, 118, 255))
-    draw.ellipse([b_head_x - 7, b_head_y + 12, b_head_x + 7, b_head_y + 22], fill=(32, 20, 16, 255))
-    for bex in (b_head_x - 14, b_head_x + 14):
-        draw.ellipse([bex - 5, b_head_y - 2, bex + 5, b_head_y + 8], fill=(255, 255, 255, 255))
-        draw.ellipse([bex - 2, b_head_y + 1, bex + 3, b_head_y + 5], fill=(20, 20, 24, 255))
-
-    return img.convert("RGB")
+    draw = ImageDraw.Draw(img)
+    ground_y = int(target_h * 0.76)
+    draw.rectangle([0, ground_y, target_w, target_h], fill=(64, 134, 58))
+    draw.rectangle([24, target_h - 120, target_w - 24, target_h - 24], fill=(20, 26, 36))
+    draw.text((40, target_h - 98), f"Scene {scene_idx + 1} (Fallback Preview)", fill=(255, 214, 102))
+    draw.text((40, target_h - 68), (prompt_text or "")[:78], fill=(240, 244, 248))
+    return img
 
 
-def generate_direct_scene_image(gemini_key, prompt_text, ratio_str, target_w, target_h, scene_idx, ref_pil=None):
-    """Generate a cartoon storybook scene image using Gemini, reference photo adaptation, or free vector art."""
+def generate_scene_image_with_ai(
+    engine_choice,
+    gemini_key,
+    hf_token,
+    prompt_text,
+    ratio_str,
+    target_w,
+    target_h,
+    scene_idx,
+    ref_pil=None,
+):
+    """Generate realistic or storybook AI scene images via Hugging Face or Gemini."""
+    errors = []
+
+    if engine_choice == "Hugging Face (FLUX / SDXL)" and hf_token and hf_token.strip():
+        client = InferenceClient(token=hf_token.strip())
+        for model_id in [
+            "black-forest-labs/FLUX.1-schnell",
+            "stabilityai/stable-diffusion-xl-base-1.0",
+        ]:
+            try:
+                pil_img = client.text_to_image(
+                    prompt=prompt_text,
+                    model=model_id,
+                    width=target_w,
+                    height=target_h,
+                )
+                return pil_img.convert("RGB"), model_id, []
+            except Exception as exc:
+                errors.append(f"{model_id}: {exc}")
+
     if gemini_key and gemini_key.strip():
         try:
             client = genai.Client(api_key=gemini_key.strip())
@@ -360,41 +226,33 @@ def generate_direct_scene_image(gemini_key, prompt_text, ratio_str, target_w, ta
                         for part in getattr(content, "parts", None) or []:
                             inline = getattr(part, "inline_data", None)
                             if inline and getattr(inline, "data", None):
-                                return Image.open(BytesIO(inline.data)).convert("RGB")
-                except Exception:
-                    continue
-        except Exception:
-            pass
+                                return Image.open(BytesIO(inline.data)).convert("RGB"), model_id, []
+                    errors.append(f"{model_id}: no image returned")
+                except Exception as exc:
+                    errors.append(f"{model_id}: {exc}")
+        except Exception as exc:
+            errors.append(f"Gemini client: {exc}")
 
     if ref_pil is not None:
-        return modify_reference_into_scene(ref_pil, target_w, target_h, scene_idx, prompt_text)
+        return modify_reference_into_scene(ref_pil, target_w, target_h, scene_idx, prompt_text), "Reference Frame", errors
 
-    # Try free cartoon illustration endpoint when no reference photo is attached
-    try:
-        cartoon_prompt = (
-            f"2D cartoon vector storybook illustration, clean outlines, rich colors, "
-            f"expressive characters, forest background. {prompt_text}"
-        )
-        encoded = urllib.parse.quote(cartoon_prompt)
-        url = (
-            f"https://image.pollinations.ai/prompt/{encoded}"
-            f"?width={target_w}&height={target_h}&seed={100 + scene_idx}&nologo=true"
-        )
-        resp = requests.get(url, timeout=20)
-        if resp.status_code == 200 and resp.content:
-            return Image.open(BytesIO(resp.content)).convert("RGB")
-    except Exception:
-        pass
-
-    return draw_cartoon_forest_and_characters(target_w, target_h, scene_idx, prompt_text)
+    return make_local_scene_card(target_w, target_h, scene_idx, prompt_text), "Local Fallback", errors
 
 
 st.title("🎬 AI Animated Story Studio")
-st.caption("Turn rough story ideas and reference photos into downloadable animated videos.")
+st.caption("Generate story scenes, narration, camera motion, and downloadable MP4 videos.")
 
 with st.sidebar:
     st.header("🔑 Studio Settings")
     api_key = st.text_input("Gemini API Key", type="password")
+    hf_token = st.text_input("Hugging Face Token (for FLUX/SDXL)", type="password")
+    image_engine = st.selectbox(
+        "Scene Image Model",
+        [
+            "Hugging Face (FLUX / SDXL)",
+            "Gemini Image",
+        ],
+    )
     aspect_ratio = st.selectbox("Video Format", ["9:16 (Reels / Shorts)", "16:9 (YouTube)"])
     if "9:16" in aspect_ratio:
         width, height, ratio_str = 720, 1280, "9:16"
@@ -496,21 +354,21 @@ with tab1:
                     key=f"vis_{i}",
                 )
 
-# --- TAB 2: DIRECT SCENE ARTWORK & REFERENCE MODIFICATION ---
+# --- TAB 2: CHARACTERS & SCENES ---
 with tab2:
-    st.subheader("Generate Scene Artwork Directly")
+    st.subheader("Generate Scene Artwork")
     art_style = st.selectbox(
-        "Choose Animation Style",
+        "Choose Visual Style",
         [
-            "2D cartoon vector storybook illustration, clean outlines, vibrant colors",
-            "3D Pixar Disney animation style, vibrant lighting, expressive faces",
-            "2D Studio Ghibli anime style, soft watercolor backgrounds, warm",
-            "3D Unreal Engine cinematic fantasy animation",
+            "Photorealistic cinematic film still, natural lighting, detailed environment and real human & wildlife proportions",
+            "3D Pixar Disney animation style, expressive characters, rich lighting, detailed forest environment",
+            "2D cartoon vector storybook illustration, clean outlines, expressive characters, vibrant forest",
+            "2D Studio Ghibli anime style, soft watercolor backgrounds, expressive characters",
         ],
     )
     char_desc = st.text_input(
         "Describe your characters & scene details:",
-        value="4 teenage 12-15 years old, one guy fat, one guy lean and other guy slim. a bear which is very giant and huge bulky one",
+        value="Four teenage boys aged 12-15 with distinct builds (one chubby, one lean, two slim) and a massive brown forest bear",
     )
     ref_file = st.file_uploader(
         "Optional: Attach your photo or a reference image to modify into scenes",
@@ -527,10 +385,10 @@ with tab2:
         active_scenes = st.session_state.scenes
         if not active_scenes:
             default_actions = [
-                "sunlit forest edge and green clearing beside a village with morning sunbeams",
-                "boys running nervously through dense forest with smoke and fire glow behind them",
-                "two boys climbing tall green trees while one boy lies still holding his breath",
-                "giant bulky brown bear walking through tall pine trees and green forest ground",
+                "four boys walking together along a forest edge near a rural village in morning sunlight",
+                "a giant brown bear emerging from dense forest trees while the boys react in shock",
+                "two boys climbing tall forest trees while one boy lies still on the ground holding his breath",
+                "the giant brown bear sniffing near the boy on the ground before walking back into the woods",
             ]
             active_scenes = [
                 {
@@ -543,6 +401,8 @@ with tab2:
 
         st.session_state.images = []
         progress = st.progress(0)
+        used_sources = []
+        all_errors = []
 
         for idx, scene in enumerate(active_scenes):
             full_prompt = (
@@ -550,8 +410,10 @@ with tab2:
                 f"Scene {idx + 1}: {scene['visual']}"
             ).strip()
 
-            pil_img = generate_direct_scene_image(
+            pil_img, src_name, src_errs = generate_scene_image_with_ai(
+                engine_choice=image_engine,
                 gemini_key=api_key,
+                hf_token=hf_token,
                 prompt_text=full_prompt,
                 ratio_str=ratio_str,
                 target_w=width,
@@ -559,12 +421,20 @@ with tab2:
                 scene_idx=idx,
                 ref_pil=ref_pil,
             )
+            used_sources.append(src_name)
+            if src_errs:
+                all_errors.extend([f"Scene {idx + 1} -> {e}" for e in src_errs])
+
             img_path = f"scene_{idx}.png"
             pil_img.save(img_path, format="PNG")
             st.session_state.images.append(img_path)
             progress.progress((idx + 1) / len(active_scenes))
 
-        st.success(f"Generated {len(st.session_state.images)} scene images!")
+        st.success(f"Generated {len(st.session_state.images)} scenes ({', '.join(set(used_sources))}).")
+        if all_errors:
+            with st.expander("Why fallback/reference was used (API details)"):
+                for err in all_errors:
+                    st.write(err)
 
     if st.session_state.images:
         cols = st.columns(2)
