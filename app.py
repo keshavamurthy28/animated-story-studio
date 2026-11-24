@@ -3,7 +3,6 @@ import base64
 import json
 import math
 import os
-import tempfile
 import textwrap
 import time
 import urllib.parse
@@ -45,6 +44,7 @@ st.set_page_config(
     layout="wide",
 )
 
+# Responsive styling for both laptop and mobile screens
 st.markdown(
     """
     <style>
@@ -60,12 +60,12 @@ st.markdown(
         flex-wrap: wrap;
         align-items: center;
         justify-content: space-between;
-        gap: 12px;
+        gap: 10px;
         background: linear-gradient(90deg, #161b22 0%, #1c2333 100%);
         border: 1px solid #30363d;
         border-radius: 14px;
-        padding: 14px 20px;
-        margin-bottom: 16px;
+        padding: 12px 16px;
+        margin-bottom: 14px;
     }
     .studio-pill {
         background: #ff2e63;
@@ -74,16 +74,56 @@ st.markdown(
         font-size: 12px;
         padding: 4px 10px;
         border-radius: 999px;
-        letter-spacing: 0.5px;
+        letter-spacing: 0.4px;
     }
     .studio-sub {
         color: #9da7b3;
-        font-size: 14px;
+        font-size: 13px;
+    }
+    .compact-preview-box {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        background: #131822;
+        border: 1px solid #283142;
+        border-radius: 12px;
+        padding: 10px;
+        margin-bottom: 8px;
+    }
+    .compact-preview-box img,
+    .compact-preview-box video,
+    .compact-preview-box [data-testid="stImage"] img,
+    .compact-preview-box [data-testid="stVideo"] video {
+        max-width: 320px !important;
+        max-height: 350px !important;
+        width: auto !important;
+        height: auto !important;
+        object-fit: contain !important;
+        border-radius: 10px;
+        margin: 0 auto !important;
+        display: block !important;
     }
     .stButton > button {
         border-radius: 10px;
-        padding: 0.55rem 1rem;
+        padding: 0.55rem 0.95rem;
         font-weight: 600;
+        min-height: 42px;
+    }
+    @media (max-width: 768px) {
+        html, body, [class*="css"] {
+            font-size: 14px;
+        }
+        .studio-header {
+            padding: 10px 12px;
+        }
+        .compact-preview-box img,
+        .compact-preview-box video,
+        .compact-preview-box [data-testid="stImage"] img,
+        .compact-preview-box [data-testid="stVideo"] video {
+            max-width: 250px !important;
+            max-height: 270px !important;
+        }
     }
     </style>
     """,
@@ -1351,11 +1391,11 @@ def apply_clip_transition(clips, transition_name="Crossfade", trans_sec=0.5):
 st.markdown(
     """
     <div class="studio-header">
-        <div style="display:flex;align-items:center;gap:12px;">
+        <div style="display:flex;align-items:center;gap:10px;">
             <span class="studio-pill">AI STUDIO PRO</span>
-            <span style="font-weight:700;font-size:18px;">Movie, Shorts & Reels Creation Suite</span>
+            <span style="font-weight:700;font-size:17px;">Movie, Shorts & Reels Creation Suite</span>
         </div>
-        <div class="studio-sub">AI B-Roll & FX • Clip Trim & Split • Live Canvas Preview • Voice, BGM & SFX • 9:16 & 16:9</div>
+        <div class="studio-sub">Laptop & Mobile Friendly • AI B-Roll & FX • Trim & Split • Voice, BGM & SFX</div>
     </div>
     """,
     unsafe_allow_html=True,
@@ -1370,7 +1410,7 @@ with st.sidebar:
         index=list(FORMAT_PRESETS.keys()).index(st.session_state.format_preset),
     )
     width, height, ratio_str = FORMAT_PRESETS[st.session_state.format_preset]
-    st.caption(f"Resolution: **{width} × {height}** (`{ratio_str}`)")
+    st.caption(f"Export Resolution: **{width} × {height}** (`{ratio_str}`)")
 
     with st.expander("🔑 API Keys & Image Engine", expanded=False):
         api_key = st.text_input("Gemini API Key", type="password")
@@ -1402,12 +1442,12 @@ with st.sidebar:
     st.session_state.locked_character_prompt = st.text_area(
         "Character / Background / Nature Command",
         value=st.session_state.locked_character_prompt,
-        height=110,
+        height=100,
     )
 
-# --- TOP VISUAL STAGE, STUDIO CONTROLS & CLIP TRIM/SPLIT TOOL ---
-with st.expander("🖥️ Live Preview Stage, Studio Controls & Clip Trim/Split", expanded=True):
-    stage_left, stage_right = st.columns([1.2, 1.8])
+# --- COMPACT LIVE PREVIEW STAGE, STUDIO CONTROLS & CLIP TRIM/SPLIT ---
+with st.expander("🖥️ Compact Preview Stage, Studio Controls & Clip Trim/Split", expanded=True):
+    stage_left, stage_right = st.columns([1.0, 1.85])
 
     with stage_left:
         avail_imgs = [p for p in st.session_state.images if os.path.exists(p)]
@@ -1420,6 +1460,7 @@ with st.expander("🖥️ Live Preview Stage, Studio Controls & Clip Trim/Split"
             key="top_monitor_mode",
         )
 
+        st.markdown('<div class="compact-preview-box">', unsafe_allow_html=True)
         if monitor_mode == "Live Frame + Effects" and avail_imgs:
             c_idx = min(int(st.session_state.selected_clip_idx), len(avail_imgs) - 1)
             with Image.open(avail_imgs[c_idx]) as im_raw:
@@ -1443,8 +1484,8 @@ with st.expander("🖥️ Live Preview Stage, Studio Controls & Clip Trim/Split"
                 )
             st.image(
                 prev_img,
-                caption=f"Scene {c_idx + 1} • {width}x{height} • FX: {scene_fx_choice}",
-                use_container_width=True,
+                caption=f"Scene {c_idx + 1} • {width}x{height} • {scene_fx_choice}",
+                width=280,
             )
         elif monitor_mode == "Rendered Clip" and avail_vids:
             v_idx = min(int(st.session_state.selected_clip_idx), len(avail_vids) - 1)
@@ -1475,17 +1516,18 @@ with st.expander("🖥️ Live Preview Stage, Studio Controls & Clip Trim/Split"
                 )
             st.image(
                 fallback_img,
-                caption=f"Preview Canvas ({width}x{height}) — Generate scenes or upload clips to begin",
-                use_container_width=True,
+                caption=f"Preview ({width}x{height})",
+                width=280,
             )
+        st.markdown("</div>", unsafe_allow_html=True)
 
     with stage_right:
         ctrl_tabs = st.tabs([
             "🎨 Looks & FX",
-            "✂️ Trim & Split Clip",
-            "🔊 Nature & Reels SFX",
+            "✂️ Trim & Split",
+            "🔊 Sound FX",
             "✍️ Text & Fit",
-            "📁 Upload Media",
+            "📁 Media",
         ])
 
         with ctrl_tabs[0]:
@@ -1517,7 +1559,7 @@ with st.expander("🖥️ Live Preview Stage, Studio Controls & Clip Trim/Split"
             fx1, fx2, fx3 = st.columns(3)
             with fx1:
                 st.session_state.editor_video_fx = st.selectbox(
-                    "Global Video Effect",
+                    "Video Effect",
                     VIDEO_FX_CHOICES,
                     index=VIDEO_FX_CHOICES.index(st.session_state.editor_video_fx),
                     key="sel_vfx",
@@ -1539,7 +1581,7 @@ with st.expander("🖥️ Live Preview Stage, Studio Controls & Clip Trim/Split"
         with ctrl_tabs[1]:
             editable_vids = [p for p in st.session_state.scene_videos if os.path.exists(p)]
             if not editable_vids:
-                st.info("Generate scene videos in Tab 2 or upload video clips in 'Upload Media' to trim or split.")
+                st.info("Generate scene videos in Tab 2 or upload video clips in 'Media' to trim or split.")
             else:
                 clip_labels = [f"Clip {i + 1}: {os.path.basename(p)}" for i, p in enumerate(editable_vids)]
                 target_v_idx = st.selectbox(
@@ -1575,7 +1617,7 @@ with st.expander("🖥️ Live Preview Stage, Studio Controls & Clip Trim/Split"
 
                 act_c1, act_c2 = st.columns(2)
                 with act_c1:
-                    if st.button("✂️ Apply Trim to Clip", key="btn_apply_trim", use_container_width=True):
+                    if st.button("✂️ Trim Clip", key="btn_apply_trim", use_container_width=True):
                         if trim_end <= trim_start + 0.15:
                             st.error("Trim End must be at least 0.2s after Trim Start.")
                         else:
@@ -1599,7 +1641,7 @@ with st.expander("🖥️ Live Preview Stage, Studio Controls & Clip Trim/Split"
                         step=0.1,
                         key="split_point_val",
                     )
-                    if st.button("🔀 Split Clip Into Two", key="btn_apply_split", use_container_width=True):
+                    if st.button("🔀 Split Clip", key="btn_apply_split", use_container_width=True):
                         os.makedirs("edited_clips", exist_ok=True)
                         ts_now = int(time.time())
                         pa_path = os.path.join("edited_clips", f"split_{target_v_idx}_A_{ts_now}.mp4")
@@ -1629,7 +1671,7 @@ with st.expander("🖥️ Live Preview Stage, Studio Controls & Clip Trim/Split"
                 step=1,
                 key="sfx_sc_num",
             ) - 1
-            if st.button("➕ Attach Sound Effect to Scene", key="attach_sfx_btn"):
+            if st.button("➕ Attach Sound Effect", key="attach_sfx_btn"):
                 if sfx_pick == "None":
                     st.session_state.scene_audio_fx.pop(sc_target, None)
                     st.info(f"Removed sound effect from Scene {sc_target + 1}.")
@@ -1711,8 +1753,8 @@ with st.expander("🖥️ Live Preview Stage, Studio Controls & Clip Trim/Split"
     clip_pool = st.session_state.scene_videos if st.session_state.scene_videos else st.session_state.images
     if clip_pool:
         st.markdown("**🎞️ Select Clip to Preview**")
-        c_btns = st.columns(min(8, len(clip_pool)))
-        for idx_c in range(min(8, len(clip_pool))):
+        c_btns = st.columns(min(5, len(clip_pool)))
+        for idx_c in range(min(5, len(clip_pool))):
             with c_btns[idx_c]:
                 active_mark = "▶ " if idx_c == st.session_state.selected_clip_idx else ""
                 if st.button(f"{active_mark}Clip {idx_c + 1}", key=f"pick_sc_{idx_c}", use_container_width=True):
@@ -1733,7 +1775,7 @@ with tab1:
     rough_story = st.text_area(
         "Story / Reel / Movie Command:",
         value="Follow the character through any setting, nature, or situation described in my command with clear emotion and action.",
-        height=115,
+        height=105,
     )
     num_scenes = st.slider("Number of Scenes", 2, 10, max(2, min(10, len(st.session_state.scenes) or 6)))
 
@@ -1971,7 +2013,7 @@ with tab2:
     ref_pil = None
     if ref_file is not None:
         ref_pil = Image.open(ref_file).convert("RGB")
-        st.image(ref_pil, caption="Reference Image", width=220)
+        st.image(ref_pil, caption="Reference Image", width=200)
 
     if st.button("🎬 Generate Scene Videos", type="primary"):
         active_scenes = sync_scenes_to_count(
@@ -2071,7 +2113,9 @@ with tab2:
             if os.path.exists(vp):
                 with grid_cols[idx % 2]:
                     st.markdown(f"**Clip {idx + 1} Video** ({get_video_duration_safe(vp):.1f}s)")
+                    st.markdown('<div class="compact-preview-box">', unsafe_allow_html=True)
                     st.video(vp)
+                    st.markdown("</div>", unsafe_allow_html=True)
                     with open(vp, "rb") as vf:
                         st.download_button(
                             label=f"⬇️ Download Clip {idx + 1}",
@@ -2271,7 +2315,9 @@ with tab4:
                         logger=None,
                     )
 
+                st.markdown('<div class="compact-preview-box">', unsafe_allow_html=True)
                 st.video(out_mp4)
+                st.markdown("</div>", unsafe_allow_html=True)
                 with open(out_mp4, "rb") as f_out:
                     st.download_button(
                         label="⬇️ Download Final MP4",
