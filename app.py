@@ -38,8 +38,9 @@ for key, default in [
     ("own_voice_table", {}),
     (
         "locked_character_prompt",
-        "Four teenage boys (12-15 years old, one chubby boy, one lean boy, two slim boys) wearing simple casual clothes, and a large brown forest bear",
+        "Four teenage boys (12-15 years old): Boy 1 is chubby with short black hair and a red t-shirt; Boy 2 is lean with messy dark hair and a blue t-shirt; Boy 3 is slim with a cap and green shirt; Boy 4 is slim with a yellow shirt. Plus one large brown forest bear.",
     ),
+    ("exact_character_count", 4),
     ("lock_character_enabled", True),
     ("kannada_subtitles", {}),
     ("populated_script_lines", []),
@@ -74,20 +75,43 @@ def apply_audio(clip, audio):
     return clip.with_audio(audio) if MOVIEPY_V2 else clip.set_audio(audio)
 
 
+def ensure_exact_size(pil_img, target_w, target_h):
+    """Force any image onto an exact (target_w, target_h) canvas without aspect distortion."""
+    resampling = getattr(Image, "Resampling", Image).LANCZOS
+    rgb = pil_img.convert("RGB")
+    if rgb.size == (target_w, target_h):
+        return rgb
+    scale = max(target_w / max(1, rgb.width), target_h / max(1, rgb.height))
+    nw = max(target_w, int(round(rgb.width * scale)))
+    nh = max(target_h, int(round(rgb.height * scale)))
+    resized = rgb.resize((nw, nh), resampling)
+    left = max(0, (nw - target_w) // 2)
+    top = max(0, (nh - target_h) // 2)
+    return resized.crop((left, top, left + target_w, top + target_h)).resize(
+        (target_w, target_h), resampling
+    )
+
+
+def _is_valid_font_file(path):
+    return os.path.exists(path) and os.path.isfile(path) and os.path.getsize(path) > 40000
+
+
 def _find_font(font_size, lang="English"):
     """Load a suitable TrueType font for English or Kannada, fetching Noto Sans Kannada if needed."""
-    candidates = []
     if lang == "Kannada":
-        candidates.extend([
+        kannada_candidates = [
             "fonts/NotoSansKannada-Regular.ttf",
+            "fonts/NotoSansKannada-Bold.ttf",
             "NotoSansKannada-Regular.ttf",
             "NotoSansKannada-Bold.ttf",
             "/tmp/NotoSansKannada-Regular.ttf",
             "/usr/share/fonts/truetype/noto/NotoSansKannada-Regular.ttf",
             "/usr/share/fonts/truetype/noto/NotoSansKannada-Bold.ttf",
-        ])
-        for path in candidates:
-            if os.path.exists(path):
+            "/usr/share/fonts/opentype/noto/NotoSansKannada-Regular.otf",
+            "/usr/share/fonts/truetype/lohit-kannada/Lohit-Kannada.ttf",
+        ]
+        for path in kannada_candidates:
+            if _is_valid_font_file(path):
                 try:
                     return ImageFont.truetype(path, font_size), path
                 except Exception:
@@ -95,27 +119,28 @@ def _find_font(font_size, lang="English"):
 
         tmp_font = "/tmp/NotoSansKannada-Regular.ttf"
         font_urls = [
+            "https://raw.githubusercontent.com/notofonts/kannada/main/hinted/ttf/NotoSansKannada/NotoSansKannada-Regular.ttf",
             "https://github.com/google/fonts/raw/main/ofl/notosanskannada/static/NotoSansKannada-Regular.ttf",
-            "https://github.com/google/fonts/raw/main/ofl/notosanskannada/NotoSansKannada%5Bwght%5D.ttf",
-            "https://raw.githubusercontent.com/notofonts/kannada/main/hinted/ttf/NotoSansKannada-Regular.ttf",
+            "https://raw.githubusercontent.com/google/fonts/main/ofl/notosanskannada/static/NotoSansKannada-Regular.ttf",
         ]
         for url in font_urls:
             try:
-                r = requests.get(url, timeout=20)
-                if r.ok and len(r.content) > 15000:
+                r = requests.get(url, timeout=25)
+                if r.ok and len(r.content) > 40000 and b"<!DOCTYPE" not in r.content[:200]:
                     with open(tmp_font, "wb") as f:
                         f.write(r.content)
-                    return ImageFont.truetype(tmp_font, font_size), tmp_font
+                    if _is_valid_font_file(tmp_font):
+                        return ImageFont.truetype(tmp_font, font_size), tmp_font
             except Exception:
                 continue
 
-    candidates.extend([
+    fallback_candidates = [
         "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
         "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
         "arial.ttf",
         "DejaVuSans-Bold.ttf",
-    ])
-    for path in candidates:
+    ]
+    for path in fallback_candidates:
         if os.path.exists(path):
             try:
                 return ImageFont.truetype(path, font_size), path
@@ -131,7 +156,7 @@ def translate_lines_to_kannada(gemini_key, lines):
 
     client = genai.Client(api_key=gemini_key.strip())
     prompt = (
-        "Translate each string in this JSON array into clear, natural, easy-to-read Kannada. "
+        "Translate each string in this JSON array into natural, simple, clear Kannada. "
         "Return ONLY a valid JSON array of strings in the exact same order, with no markdown.\n"
         + json.dumps(lines, ensure_ascii=False)
     )
@@ -223,7 +248,7 @@ def draw_lipsync_indicator(frame_pil, speech_energy, target_w, target_h, enable_
     mouth_open = max(2, int(round(4 + speech_energy * 14)))
     mouth_w = max(18, int(round(24 + speech_energy * 12)))
     cx = target_w // 2
-    cy = int(round(target_h * 0.74))
+    cy = int(round(target_h * 0.72))
 
     badge_w = mouth_w + 26
     badge_h = max(26, mouth_open + 16)
@@ -242,22 +267,23 @@ def draw_lipsync_indicator(frame_pil, speech_energy, target_w, target_h, enable_
 
 
 def draw_subtitle_on_frame(frame_pil, subtitle_text, target_w, target_h, lang="English"):
-    """Draw a clean subtitle banner near the bottom of a scene frame."""
+    """Draw a clean subtitle banner near the bottom of a scene frame with Kannada font support."""
     if not subtitle_text or not subtitle_text.strip() or lang == "None":
         return frame_pil
 
     img_rgba = frame_pil.convert("RGBA")
     draw = ImageDraw.Draw(img_rgba)
 
-    font_size = max(24, int(round(target_w * 0.038)))
-    font, _ = _find_font(font_size, lang=lang)
+    font_size = max(24, int(round(target_w * 0.036)))
+    font, font_src = _find_font(font_size, lang=lang)
+    lang_code = "kn" if lang == "Kannada" else "en"
 
-    chars_per_line = max(16, int(target_w / max(11, font_size * 0.62)))
+    chars_per_line = max(14, int(target_w / max(11, font_size * 0.64)))
     wrapped_lines = textwrap.wrap(subtitle_text.strip(), width=chars_per_line)[:3]
     if not wrapped_lines:
         return frame_pil
 
-    line_h = font_size + 10
+    line_h = font_size + 12
     box_h = len(wrapped_lines) * line_h + 24
     pad_x = max(20, int(target_w * 0.04))
     box_top = max(16, target_h - box_h - max(42, int(target_h * 0.07)))
@@ -266,16 +292,26 @@ def draw_subtitle_on_frame(frame_pil, subtitle_text, target_w, target_h, lang="E
     draw.rounded_rectangle(
         [pad_x, box_top, target_w - pad_x, box_bot],
         radius=14,
-        fill=(10, 14, 22, 205),
+        fill=(10, 14, 22, 210),
     )
 
     cur_y = box_top + 12
     for line in wrapped_lines:
-        bbox = draw.textbbox((0, 0), line, font=font)
+        try:
+            bbox = draw.textbbox((0, 0), line, font=font, language=lang_code)
+        except TypeError:
+            bbox = draw.textbbox((0, 0), line, font=font)
         text_w = bbox[2] - bbox[0]
         text_x = max(pad_x + 12, (target_w - text_w) // 2)
-        draw.text((text_x + 2, cur_y + 2), line, font=font, fill=(0, 0, 0, 230))
-        draw.text((text_x, cur_y), line, font=font, fill=(255, 248, 214, 255))
+
+        for ox, oy, col in [
+            (text_x + 2, cur_y + 2, (0, 0, 0, 235)),
+            (text_x, cur_y, (255, 248, 214, 255)),
+        ]:
+            try:
+                draw.text((ox, oy), line, font=font, fill=col, language=lang_code)
+            except TypeError:
+                draw.text((ox, oy), line, font=font, fill=col)
         cur_y += line_h
 
     return img_rgba.convert("RGB")
@@ -294,27 +330,18 @@ def build_motion_clip(
     enable_lipsync=True,
     enable_char_motion=True,
 ):
-    """Create animated scene frames with camera motion, character movement, lip-sync, and subtitles."""
+    """Create animated scene frames with exact target_w x target_h dimensions."""
     resampling = getattr(Image, "Resampling", Image).LANCZOS
     modes = ["Zoom In", "Pan Right", "Zoom Out", "Pan Left"]
     active_mode = modes[scene_idx % len(modes)] if motion_mode == "Auto Alternate" else motion_mode
 
-    overscan = 1.18
+    overscan = 1.16
     canvas_w = int(round(target_w * overscan))
     canvas_h = int(round(target_h * overscan))
 
     with Image.open(img_path) as im:
-        rgb = im.convert("RGB")
-        cover_scale = max(canvas_w / max(1, rgb.width), canvas_h / max(1, rgb.height))
-        base_w = max(canvas_w, int(round(rgb.width * cover_scale)))
-        base_h = max(canvas_h, int(round(rgb.height * cover_scale)))
-        base_resized = rgb.resize((base_w, base_h), resampling)
-        left_pad = max(0, (base_w - canvas_w) // 2)
-        top_pad = max(0, (base_h - canvas_h) // 2)
-        canvas_np = np.asarray(
-            base_resized.crop((left_pad, top_pad, left_pad + canvas_w, top_pad + canvas_h)),
-            dtype=np.uint8,
-        )
+        exact_base = ensure_exact_size(im, canvas_w, canvas_h)
+        canvas_np = np.asarray(exact_base, dtype=np.uint8)
 
     safe_dur = max(float(duration), 0.5)
     num_steps = max(6, min(20, int(round(safe_dur * 4))))
@@ -327,17 +354,17 @@ def build_motion_clip(
         progress = s_idx / max(1, num_steps - 1)
         ease = progress * progress * (3.0 - 2.0 * progress)
 
-        char_sway_x = int(round(math.sin(s_idx * 1.1 + scene_idx) * 8)) if enable_char_motion else 0
-        char_bob_y = int(round(abs(math.cos(s_idx * 1.4 + scene_idx)) * 7)) if enable_char_motion else 0
+        char_sway_x = int(round(math.sin(s_idx * 1.1 + scene_idx) * 6)) if enable_char_motion else 0
+        char_bob_y = int(round(abs(math.cos(s_idx * 1.4 + scene_idx)) * 5)) if enable_char_motion else 0
 
         if active_mode == "Zoom In":
-            scale = 1.0 + 0.14 * ease
+            scale = 1.0 + 0.12 * ease
             win_w = max(2, int(round(target_w / scale)))
             win_h = max(2, int(round(target_h / scale)))
             x0 = (canvas_w - win_w) // 2 + char_sway_x
             y0 = (canvas_h - win_h) // 2 + char_bob_y
         elif active_mode == "Zoom Out":
-            scale = 1.14 - 0.14 * ease
+            scale = 1.12 - 0.12 * ease
             win_w = max(2, int(round(target_w / scale)))
             win_h = max(2, int(round(target_h / scale)))
             x0 = (canvas_w - win_w) // 2 + char_sway_x
@@ -360,7 +387,7 @@ def build_motion_clip(
         cropped = canvas_np[y0 : y0 + win_h, x0 : x0 + win_w]
 
         frame_pil = Image.fromarray(cropped)
-        if win_w != target_w or win_h != target_h:
+        if frame_pil.size != (target_w, target_h):
             frame_pil = frame_pil.resize((target_w, target_h), resampling)
 
         if enable_lipsync:
@@ -381,6 +408,7 @@ def build_motion_clip(
                 lang=subtitle_lang,
             )
 
+        frame_pil = ensure_exact_size(frame_pil, target_w, target_h)
         frame_path = os.path.join("motion_frames", f"s{scene_idx}_f{s_idx}.jpg")
         frame_pil.save(frame_path, format="JPEG", quality=92)
         subclips.append(apply_duration(ImageClip(frame_path), step_dur))
@@ -389,37 +417,24 @@ def build_motion_clip(
 
 
 def modify_reference_into_scene(ref_pil, target_w, target_h, scene_idx, art_style):
-    """Adapt an uploaded reference photo/image into a distinct scene frame."""
+    """Adapt an uploaded reference photo/image into an exact target_w x target_h scene frame."""
     resampling = getattr(Image, "Resampling", Image).LANCZOS
-    base = ref_pil.convert("RGB")
-    cover_scale = max(target_w / max(1, base.width), target_h / max(1, base.height))
-    rw = max(target_w, int(round(base.width * cover_scale)))
-    rh = max(target_h, int(round(base.height * cover_scale)))
-    resized = base.resize((rw, rh), resampling)
-
-    shifts_x = [0.5, 0.25, 0.75, 0.45, 0.65, 0.35]
-    shifts_y = [0.45, 0.55, 0.4, 0.5, 0.35, 0.6]
-    sx = shifts_x[scene_idx % len(shifts_x)]
-    sy = shifts_y[scene_idx % len(shifts_y)]
-    left = int(round(max(0, rw - target_w) * sx))
-    top = int(round(max(0, rh - target_h) * sy))
-    framed = resized.crop((left, top, left + target_w, top + target_h))
-
+    base = ensure_exact_size(ref_pil, target_w, target_h)
     style_lower = (art_style or "").lower()
     if "ghibli" in style_lower or "watercolor" in style_lower:
-        framed = framed.filter(ImageFilter.SMOOTH_MORE)
+        framed = base.filter(ImageFilter.SMOOTH_MORE)
         framed = ImageEnhance.Color(framed).enhance(1.18)
     else:
-        framed = ImageEnhance.Contrast(framed).enhance(1.12)
+        framed = ImageEnhance.Contrast(base).enhance(1.12)
         framed = ImageEnhance.Color(framed).enhance(1.14)
 
     mood_factors = [1.0, 1.05, 0.96, 1.03, 0.98, 1.05]
     framed = ImageEnhance.Brightness(framed).enhance(mood_factors[scene_idx % len(mood_factors)])
-    return framed.convert("RGB")
+    return ensure_exact_size(framed, target_w, target_h)
 
 
 def generate_cloudflare_flux_image(cf_account_id, cf_api_token, prompt_text, target_w, target_h, seed=42):
-    """Call Cloudflare Workers AI FLUX.1 [schnell] REST API cleanly."""
+    """Call Cloudflare Workers AI FLUX.1 [schnell] REST API with explicit width/height and seed."""
     url = (
         f"https://api.cloudflare.com/client/v4/accounts/{cf_account_id.strip()}"
         "/ai/run/@cf/black-forest-labs/flux-1-schnell"
@@ -428,8 +443,13 @@ def generate_cloudflare_flux_image(cf_account_id, cf_api_token, prompt_text, tar
         "Authorization": f"Bearer {cf_api_token.strip()}",
         "Content-Type": "application/json",
     }
+    w_clean = max(256, min(1024, (target_w // 8) * 8))
+    h_clean = max(256, min(1024, (target_h // 8) * 8))
     payload = {
         "prompt": prompt_text,
+        "width": w_clean,
+        "height": h_clean,
+        "seed": seed,
     }
     resp = requests.post(url, headers=headers, json=payload, timeout=90)
     if not resp.ok:
@@ -437,14 +457,16 @@ def generate_cloudflare_flux_image(cf_account_id, cf_api_token, prompt_text, tar
 
     content_type = resp.headers.get("Content-Type", "")
     if "image/" in content_type:
-        return Image.open(BytesIO(resp.content)).convert("RGB")
+        img = Image.open(BytesIO(resp.content)).convert("RGB")
+        return ensure_exact_size(img, target_w, target_h)
 
     data = resp.json()
     result = data.get("result", {}) if isinstance(data, dict) else {}
     b64_img = result.get("image")
     if b64_img:
         raw_bytes = base64.b64decode(b64_img)
-        return Image.open(BytesIO(raw_bytes)).convert("RGB")
+        img = Image.open(BytesIO(raw_bytes)).convert("RGB")
+        return ensure_exact_size(img, target_w, target_h)
 
     raise ValueError(f"Unexpected Cloudflare response: {data}")
 
@@ -480,6 +502,8 @@ def generate_real_ai_scene(
     if engine_choice == "Hugging Face (FLUX / SDXL)" or (not errors and hf_token.strip()):
         if hf_token.strip():
             client = InferenceClient(token=hf_token.strip())
+            w_hf = max(512, min(1024, (target_w // 8) * 8))
+            h_hf = max(512, min(1024, (target_h // 8) * 8))
             for model_id in [
                 "black-forest-labs/FLUX.1-schnell",
                 "stabilityai/stable-diffusion-xl-base-1.0",
@@ -488,10 +512,10 @@ def generate_real_ai_scene(
                     img = client.text_to_image(
                         prompt=prompt_text,
                         model=model_id,
-                        width=min(target_w, 1024),
-                        height=min(target_h, 1024),
+                        width=w_hf,
+                        height=h_hf,
                     )
-                    return img.convert("RGB"), f"HF {model_id}", []
+                    return ensure_exact_size(img.convert("RGB"), target_w, target_h), f"HF {model_id}", []
                 except Exception as exc:
                     errors.append(f"{model_id}: {exc}")
         elif engine_choice == "Hugging Face (FLUX / SDXL)":
@@ -517,7 +541,8 @@ def generate_real_ai_scene(
                             for part in getattr(content, "parts", None) or []:
                                 inline = getattr(part, "inline_data", None)
                                 if inline and getattr(inline, "data", None):
-                                    return Image.open(BytesIO(inline.data)).convert("RGB"), f"Gemini {model_id}", []
+                                    img = Image.open(BytesIO(inline.data)).convert("RGB")
+                                    return ensure_exact_size(img, target_w, target_h), f"Gemini {model_id}", []
                         errors.append(f"{model_id}: no image returned")
                     except Exception as exc:
                         errors.append(f"{model_id}: {exc}")
@@ -535,7 +560,9 @@ def generate_real_ai_scene(
 
 
 st.title("🎬 AI Animated Story Studio")
-st.caption("Locked character prompts, character reference upload, interactive English & Kannada story editor, voiceovers, character motion & lip-sync, and MP4 export.")
+st.caption(
+    "Locked character count & faces, character reference upload, interactive English & Kannada story editor, voiceovers, character motion & lip-sync, and exact-dimension MP4 export."
+)
 
 with st.sidebar:
     st.header("🔑 Studio Settings")
@@ -558,15 +585,22 @@ with st.sidebar:
         width, height, ratio_str = 1280, 720, "16:9"
 
     st.divider()
-    st.subheader("🔒 Locked Character Identity")
+    st.subheader("🔒 Locked Character & Cast Identity")
     st.session_state.lock_character_enabled = st.checkbox(
-        "Keep character prompt locked across scenes",
+        "Lock character count, faces & outfits across scenes",
         value=st.session_state.lock_character_enabled,
     )
+    st.session_state.exact_character_count = st.number_input(
+        "Exact Main Character Count",
+        min_value=1,
+        max_value=8,
+        value=int(st.session_state.exact_character_count),
+        step=1,
+    )
     st.session_state.locked_character_prompt = st.text_area(
-        "Locked Character Prompt",
+        "Locked Character & Face Prompt",
         value=st.session_state.locked_character_prompt,
-        height=95,
+        height=110,
     )
 
 tab1, tab2, tab3, tab4 = st.tabs([
@@ -597,7 +631,7 @@ with tab1:
                 "gemini-3.1-flash-lite",
             ]
             char_context = (
-                f"\nConsistent character description to keep across scenes: {st.session_state.locked_character_prompt}"
+                f"\nStrict cast lock: Keep exact character count ({st.session_state.exact_character_count} main characters) and consistent faces/outfits across every scene: {st.session_state.locked_character_prompt}"
                 if st.session_state.lock_character_enabled
                 else ""
             )
@@ -738,9 +772,10 @@ with tab2:
 
     ref_col1, ref_col2 = st.columns([1.4, 1])
     with ref_col1:
-        active_char_prompt = st.text_input(
-            "Active Character Prompt (Synced with Locked Character Prompt)",
+        active_char_prompt = st.text_area(
+            "Active Character & Face Prompt (Synced with Locked Character Prompt)",
             value=st.session_state.locked_character_prompt,
+            height=90,
         )
         if st.session_state.lock_character_enabled:
             st.session_state.locked_character_prompt = active_char_prompt
@@ -781,6 +816,12 @@ with tab2:
             if st.session_state.lock_character_enabled
             else active_char_prompt
         )
+        cast_guard = (
+            f"Exact character count: {int(st.session_state.exact_character_count)} main characters. "
+            f"Keep identical faces, hair, and outfits from {char_to_use}. Do not add extra background people."
+            if st.session_state.lock_character_enabled
+            else char_to_use
+        )
 
         st.session_state.images = []
         progress = st.progress(0)
@@ -789,8 +830,8 @@ with tab2:
 
         for idx, scene in enumerate(active_scenes):
             full_prompt = (
-                f"{art_style}. Locked Characters: {char_to_use}. "
-                f"Scene {idx + 1}: {scene['visual']}"
+                f"{art_style}. {cast_guard} "
+                f"Scene {idx + 1} action: {scene['visual']}"
             ).strip()
 
             pil_img, src_name, src_errs = generate_real_ai_scene(
@@ -810,15 +851,18 @@ with tab2:
                 all_errors.extend([f"Scene {idx + 1}: {e}" for e in src_errs])
 
             if pil_img is not None:
+                exact_img = ensure_exact_size(pil_img, width, height)
                 img_path = f"scene_{idx}.png"
-                pil_img.save(img_path, format="PNG")
+                exact_img.save(img_path, format="PNG")
                 st.session_state.images.append(img_path)
                 used_sources.append(src_name or "AI")
 
             progress.progress((idx + 1) / len(active_scenes))
 
         if st.session_state.images:
-            st.success(f"Generated {len(st.session_state.images)} scenes ({', '.join(set(used_sources))}).")
+            st.success(
+                f"Generated {len(st.session_state.images)} scenes at exact {width}x{height} ({', '.join(set(used_sources))})."
+            )
         else:
             st.error(
                 "No real AI image was generated because no active image API credentials were provided or the image API returned an error/quota limit."
@@ -833,7 +877,7 @@ with tab2:
         cols = st.columns(2)
         for idx, img_path in enumerate(st.session_state.images):
             if os.path.exists(img_path):
-                cols[idx % 2].image(img_path, caption=f"Scene {idx + 1}", use_container_width=True)
+                cols[idx % 2].image(img_path, caption=f"Scene {idx + 1} ({width}x{height})", use_container_width=True)
 
 # --- TAB 3: VOICE & SOUND ---
 with tab3:
@@ -1074,7 +1118,7 @@ with tab3:
 
 # --- TAB 4: RENDER & DOWNLOAD ---
 with tab4:
-    st.subheader("Character Animation, Lip-Sync, Subtitles & MP4 Export")
+    st.subheader("Character Animation, Lip-Sync, Subtitles & Exact-Size MP4 Export")
     c1, c2, c3, c4 = st.columns(4)
     with c1:
         free_motion_style = st.selectbox(
@@ -1093,8 +1137,7 @@ with tab4:
         enable_lipsync = st.checkbox("Voice Lip-Sync Cadence", value=True)
 
     _, active_font_source = _find_font(28, lang=subtitle_lang if subtitle_lang != "None" else "English")
-    if subtitle_lang == "Kannada":
-        st.caption(f"Kannada font status: `{active_font_source}`")
+    st.caption(f"Target output size: `{width}x{height}` ({ratio_str}) | Active font: `{active_font_source}`")
 
     if st.button("🎬 Render Final MP4 Video", type="primary"):
         if not st.session_state.images or not st.session_state.audio_files:
@@ -1107,7 +1150,7 @@ with tab4:
 
             try:
                 with st.spinner(
-                    "Animating characters, syncing speech cadence, rendering subtitles, and exporting MP4..."
+                    f"Rendering {width}x{height} video with locked characters, lip-sync cadence, and {subtitle_lang} subtitles..."
                 ):
                     if subtitle_lang == "Kannada":
                         sub_lines = get_script_lines_for_language(
