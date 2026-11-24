@@ -31,24 +31,73 @@ st.set_page_config(
     layout="wide",
 )
 
+DEFAULT_CHAR_PROMPT = (
+    "Single 35-year-old man with short neat dark hair, subtle stubble, wearing a crisp "
+    "charcoal blazer over a light shirt and dark trousers, expressive eyes and body language, "
+    "full upper-body or medium shot inside a modern corporate office"
+)
+
+DEFAULT_CORPORATE_SCENES = [
+    {
+        "narration": "At thirty-five, every deadline in the corporate office feels heavier than the last, pulling him deep into quiet pressure.",
+        "kannada_narration": "ಮೂವತ್ತೈದರ ವಯಸ್ಸಿನಲ್ಲಿ, ಕಚೇರಿಯ ಪ್ರತಿಯೊಂದು ಗಡುವು ಮೊದಲಿಗಿಂತ ಹೆಚ್ಚು ಭಾರವಾಗಿ ಭಾಸವಾಗುತ್ತದೆ, ಆಳವಾದ ಒತ್ತಡಕ್ಕೆ ದೂಡುತ್ತದೆ.",
+        "emotion": "Heavy Pressure & Quiet Strain",
+        "visual": (
+            "Medium shot at a corporate desk with dual monitors and spreadsheets; 35-year-old man "
+            "rubbing his temples with furrowed brow and tense shoulders under cool office lights"
+        ),
+    },
+    {
+        "narration": "A sudden shift in the meeting room leaves him caught between sharp expectation and silent disbelief.",
+        "kannada_narration": "ಸಭಾಂಗಣದಲ್ಲಿನ ಹಠಾತ್ ಬದಲಾವಣೆ ಅವನನ್ನು ನಿರೀಕ್ಷೆ ಮತ್ತು ಮೌನ ಅಚ್ಚರಿಯ ನಡುವೆ ಸಿಲುಕಿಸುತ್ತದೆ.",
+        "emotion": "Shock & Silent Disbelief",
+        "visual": (
+            "Wide-medium shot inside a glass-walled corporate conference room with a long table and notes; "
+            "35-year-old man frozen mid-thought with wide eyes and jaw tightened"
+        ),
+    },
+    {
+        "narration": "Standing beside the tall office window as city lights flicker, waves of frustration and vulnerability wash over him.",
+        "kannada_narration": "ಕಚೇರಿಯ ಎತ್ತರದ ಕಿಟಕಿಯ ಬಳಿ ನಿಂತಾಗ, ಹತಾಶೆ ಮತ್ತು ಭಾವುಕತೆಯ ಅಲೆಗಳು ಅವನನ್ನು ಆವರಿಸುತ್ತವೆ.",
+        "emotion": "Frustration & Vulnerability",
+        "visual": (
+            "Medium-wide shot near floor-to-ceiling office windows overlooking twilight city towers; "
+            "35-year-old man leaning slightly against the frame with a tired sigh and downcast gaze"
+        ),
+    },
+    {
+        "narration": "Taking a slow breath back at his workstation, he gathers resolve and steadies his focus for what comes next.",
+        "kannada_narration": "ತನ್ನ ಡೆಸ್ಕ್ ಬಳಿ ನಿಧಾನವಾಗಿ ಉಸಿರು ಎಳೆದುಕೊಂಡು, ಮುಂದಿನ ಸವಾಲಿಗೆ ಧೈರ್ಯ ಮತ್ತು ಗಮನವನ್ನು ಒಗ್ಗೂಡಿಸುತ್ತಾನೆ.",
+        "emotion": "Inner Resolve & Composure",
+        "visual": (
+            "Medium shot at a clean corporate workstation with a notebook and coffee mug; "
+            "35-year-old man sitting upright with a calm, determined expression and focused eyes"
+        ),
+    },
+]
+
 for key, default in [
-    ("scenes", []),
+    ("scenes", [dict(s) for s in DEFAULT_CORPORATE_SCENES]),
     ("images", []),
     ("audio_files", []),
     ("custom_audio_paths", []),
     ("own_voice_table", {}),
-    (
-        "locked_character_prompt",
-        "Four teenage boys (12-15 years old, one chubby boy, one lean boy, two slim boys) wearing simple casual clothes, and a large brown forest bear",
-    ),
-    ("exact_character_count", 4),
+    ("locked_character_prompt", DEFAULT_CHAR_PROMPT),
+    ("exact_character_count", 1),
     ("lock_character_enabled", True),
     ("kannada_subtitles", {}),
     ("populated_script_lines", []),
     ("populated_script_lang", "English"),
+    ("gen_batch_id", 0),
 ]:
     if key not in st.session_state:
         st.session_state[key] = default
+
+for idx, sc in enumerate(st.session_state.scenes):
+    st.session_state.setdefault(f"nar_{idx}", sc.get("narration", ""))
+    st.session_state.setdefault(f"kn_script_{idx}", sc.get("kannada_narration", ""))
+    st.session_state.setdefault(f"vis_{idx}", sc.get("visual", ""))
+    st.session_state.setdefault(f"emo_{idx}", sc.get("emotion", "Dense Emotion"))
 
 
 def run_async(coro):
@@ -182,20 +231,33 @@ def translate_lines_to_kannada(gemini_key, lines):
 
 
 def build_fallback_scenes_from_rough_story(rough_text, count, char_prompt):
-    """Build scene objects deterministically if Gemini API has no quota or fails."""
+    """Build distinct emotional corporate scenes when Gemini is unavailable or has no quota."""
     clean_story = " ".join(rough_text.strip().split())
     sentences = [
         s.strip()
         for s in clean_story.replace("!", ".").replace("?", ".").split(".")
         if s.strip()
     ]
+    emotions_and_settings = [
+        ("Overwhelmed & Tense", "at a glowing computer desk surrounded by documents inside a corporate office"),
+        ("Shocked & Guarded", "inside a glass-walled corporate meeting room with a conference table and presentation screen"),
+        ("Sorrowful & Drained", "standing beside tall corporate office windows overlooking city buildings at dusk"),
+        ("Angry & Restrained", "by a modern office cubicle partition holding files with tight posture"),
+        ("Reflective & Heavy-Hearted", "walking slowly down a quiet corporate corridor with warm overhead lights"),
+        ("Resolute & Composed", "seated back at his corporate desk with a notebook and coffee cup, steady gaze"),
+    ]
     scenes = []
     for idx in range(count):
         base_line = sentences[idx % len(sentences)] if sentences else clean_story
+        emo_label, setting_desc = emotions_and_settings[idx % len(emotions_and_settings)]
         scenes.append({
             "narration": f"Scene {idx + 1}: {base_line}.",
             "kannada_narration": "",
-            "visual": f"{base_line}, featuring {char_prompt}, cinematic lighting, scene {idx + 1}",
+            "emotion": emo_label,
+            "visual": (
+                f"Medium shot {setting_desc}; {char_prompt}, showing {emo_label.lower()} "
+                f"facial reaction and body posture tied to: {base_line}"
+            ),
         })
     return scenes
 
@@ -435,6 +497,154 @@ def build_motion_clip(
     return concatenate_videoclips(subclips, method="chain")
 
 
+def build_local_bypass_scene(prompt_text, target_w, target_h, scene_idx, emotion_label=""):
+    """Distinct corporate scene storyboard frame when external AI image APIs fail/quota-out."""
+    palettes = [
+        ((32, 46, 72), (56, 76, 108), (20, 26, 38)),
+        ((46, 38, 68), (82, 66, 106), (24, 20, 34)),
+        ((28, 44, 62), (118, 86, 68), (18, 24, 34)),
+        ((58, 34, 42), (96, 54, 62), (24, 18, 24)),
+        ((34, 48, 64), (72, 92, 114), (20, 28, 36)),
+        ((28, 56, 68), (64, 104, 112), (18, 32, 38)),
+    ]
+    top_col, mid_col, bot_col = palettes[scene_idx % len(palettes)]
+
+    y_grid = np.linspace(0.0, 1.0, target_h, dtype=np.float32)[:, None, None]
+    x_grid = np.linspace(0.0, 1.0, target_w, dtype=np.float32)[None, :, None]
+    c_top = np.array(top_col, dtype=np.float32)[None, None, :]
+    c_mid = np.array(mid_col, dtype=np.float32)[None, None, :]
+    c_bot = np.array(bot_col, dtype=np.float32)[None, None, :]
+
+    blend_upper = np.clip(y_grid / 0.56, 0.0, 1.0)
+    blend_lower = np.clip((y_grid - 0.56) / 0.44, 0.0, 1.0)
+    sky_wall = c_top * (1.0 - blend_upper) + c_mid * blend_upper
+    full_bg = sky_wall * (1.0 - blend_lower) + c_bot * blend_lower
+
+    lamp_cx = target_w * (0.25 + 0.14 * (scene_idx % 4))
+    lamp_cy = target_h * (0.22 + 0.04 * (scene_idx % 3))
+    dist_sq = (x_grid[:, :, 0] - lamp_cx) ** 2 + (y_grid[:, :, 0] - lamp_cy) ** 2
+    lamp_r = min(target_w, target_h) * 0.18
+    glow = np.exp(-dist_sq / (2.0 * lamp_r ** 2))[:, :, None]
+    full_bg = np.clip(full_bg + glow * np.array([52.0, 46.0, 38.0], dtype=np.float32), 0, 255)
+
+    img = Image.fromarray(full_bg.astype(np.uint8), mode="RGB").convert("RGBA")
+    overlay = Image.new("RGBA", (target_w, target_h), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(overlay)
+
+    # Distinct corporate background architecture per scene
+    floor_y = int(target_h * 0.64)
+    variant = scene_idx % 4
+    if variant == 0:
+        # Desk + dual monitors
+        draw.rectangle([int(target_w * 0.08), floor_y, int(target_w * 0.92), int(target_h * 0.72)], fill=(22, 28, 38, 220))
+        for mx in [0.16, 0.66]:
+            draw.rounded_rectangle(
+                [int(target_w * mx), int(target_h * 0.44), int(target_w * (mx + 0.18)), int(target_h * 0.58)],
+                radius=8,
+                fill=(45, 78, 112, 200),
+                outline=(120, 175, 220, 180),
+                width=2,
+            )
+    elif variant == 1:
+        # Glass conference wall & table
+        for gx in [0.12, 0.36, 0.64, 0.88]:
+            draw.line([(int(target_w * gx), int(target_h * 0.14)), (int(target_w * gx), floor_y)], fill=(150, 180, 210, 110), width=3)
+        draw.polygon(
+            [(int(target_w * 0.12), floor_y + 15), (int(target_w * 0.88), floor_y + 15), (target_w, int(target_h * 0.76)), (0, int(target_h * 0.76))],
+            fill=(30, 36, 48, 215),
+        )
+    elif variant == 2:
+        # Floor-to-ceiling window panes overlooking city blocks
+        wx0, wy0, wx1, wy1 = int(target_w * 0.54), int(target_h * 0.16), int(target_w * 0.92), floor_y
+        draw.rectangle([wx0, wy0, wx1, wy1], fill=(24, 34, 48, 185), outline=(140, 165, 195, 160), width=2)
+        for bx in range(1, 4):
+            px = wx0 + int((wx1 - wx0) * bx / 4)
+            draw.line([(px, wy0), (px, wy1)], fill=(120, 145, 175, 120), width=2)
+    else:
+        # Cubicle divider & overhead pendant lights
+        for px in [0.25, 0.75]:
+            draw.line([(int(target_w * px), 0), (int(target_w * px), int(target_h * 0.12))], fill=(180, 190, 205, 140), width=2)
+            draw.ellipse([int(target_w * px) - 24, int(target_h * 0.12) - 6, int(target_w * px) + 24, int(target_h * 0.12) + 8], fill=(255, 225, 165, 190))
+
+    # Stylized 35-year-old corporate man silhouette with emotional posture & facial expression cues
+    cx = int(target_w * (0.44 + 0.08 * math.sin(scene_idx * 1.7)))
+    head_r = max(28, int(min(target_w, target_h) * 0.055))
+    slump_y = int(round(math.sin(scene_idx * 1.3) * 12))
+    head_cy = int(target_h * 0.43) + slump_y
+
+    # Shoulders & charcoal corporate blazer
+    sh_w = int(head_r * 2.5)
+    sh_h = int(head_r * 3.1)
+    draw.rounded_rectangle(
+        [cx - sh_w, head_cy + head_r + 6, cx + sh_w, head_cy + head_r + 6 + sh_h],
+        radius=26,
+        fill=(34, 40, 52, 235),
+        outline=(95, 112, 138, 160),
+        width=2,
+    )
+    # Shirt V-collar
+    draw.polygon(
+        [(cx - 18, head_cy + head_r + 8), (cx + 18, head_cy + head_r + 8), (cx, head_cy + head_r + 56)],
+        fill=(220, 228, 238, 220),
+    )
+
+    # Head & hair
+    draw.ellipse([cx - head_r, head_cy - head_r, cx + head_r, head_cy + head_r], fill=(206, 162, 132, 245))
+    draw.pieslice([cx - head_r, head_cy - head_r - 4, cx + head_r, head_cy + head_r - 8], 185, 355, fill=(38, 32, 28, 255))
+
+    # Emotion-specific eyes & mouth expression
+    eye_y = head_cy - 2
+    eye_dx = max(10, int(head_r * 0.36))
+    emo_txt = (emotion_label or "").lower()
+    if any(k in emo_txt for k in ["shock", "disbelief", "surpris"]):
+        draw.ellipse([cx - eye_dx - 6, eye_y - 6, cx - eye_dx + 6, eye_y + 6], fill=(250, 250, 250, 255))
+        draw.ellipse([cx + eye_dx - 6, eye_y - 6, cx + eye_dx + 6, eye_y + 6], fill=(250, 250, 250, 255))
+        draw.ellipse([cx - eye_dx - 3, eye_y - 3, cx - eye_dx + 3, eye_y + 3], fill=(25, 25, 30, 255))
+        draw.ellipse([cx + eye_dx - 3, eye_y - 3, cx + eye_dx + 3, eye_y + 3], fill=(25, 25, 30, 255))
+        draw.ellipse([cx - 8, head_cy + 14, cx + 8, head_cy + 26], outline=(110, 58, 52, 255), width=2)
+    elif any(k in emo_txt for k in ["sorrow", "sad", "drain", "vulnerab", "heavy"]):
+        draw.line([(cx - eye_dx - 7, eye_y - 6), (cx - eye_dx + 6, eye_y + 1)], fill=(45, 36, 32, 255), width=2)
+        draw.line([(cx + eye_dx - 6, eye_y + 1), (cx + eye_dx + 7, eye_y - 6)], fill=(45, 36, 32, 255), width=2)
+        draw.arc([cx - 12, head_cy + 16, cx + 12, head_cy + 28], 190, 350, fill=(105, 56, 52, 255), width=2)
+    else:
+        draw.line([(cx - eye_dx - 7, eye_y + 2), (cx - eye_dx + 6, eye_y - 5)], fill=(45, 36, 32, 255), width=2)
+        draw.line([(cx + eye_dx - 6, eye_y - 5), (cx + eye_dx + 7, eye_y + 2)], fill=(45, 36, 32, 255), width=2)
+        draw.line([(cx - 10, head_cy + 18), (cx + 10, head_cy + 18)], fill=(105, 56, 52, 255), width=2)
+
+    # Scene & emotion caption card
+    card_w = int(target_w * 0.88)
+    card_h = int(target_h * 0.19)
+    cx0 = (target_w - card_w) // 2
+    cy0 = int(target_h * 0.72)
+    draw.rounded_rectangle(
+        [cx0, cy0, cx0 + card_w, cy0 + card_h],
+        radius=18,
+        fill=(10, 15, 24, 205),
+        outline=(235, 195, 115, 185),
+        width=2,
+    )
+
+    title_font, _ = _find_font(max(20, int(target_w * 0.028)), lang="English")
+    body_font, _ = _find_font(max(17, int(target_w * 0.023)), lang="English")
+    emo_badge = f" • {emotion_label.upper()}" if emotion_label else ""
+    draw.text(
+        (cx0 + 18, cy0 + 12),
+        f"SCENE {scene_idx + 1}{emo_badge}",
+        font=title_font,
+        fill=(255, 218, 138, 255),
+    )
+
+    clean_action = " ".join((prompt_text or "").split())
+    wrapped = textwrap.wrap(clean_action, width=max(26, int(card_w / max(10, int(target_w * 0.023) * 0.56))))[:3]
+    cur_y = cy0 + 46
+    for line in wrapped:
+        draw.text((cx0 + 18, cur_y), line, font=body_font, fill=(238, 244, 250, 245))
+        cur_y += int(target_w * 0.027)
+
+    combined = Image.alpha_composite(img, overlay).convert("RGB")
+    return ensure_exact_size(combined, target_w, target_h)
+
+
 def modify_reference_into_scene(ref_pil, target_w, target_h, scene_idx, art_style):
     """Adapt an uploaded reference photo/image into an exact target_w x target_h scene frame."""
     base = ensure_exact_size(ref_pil, target_w, target_h)
@@ -452,7 +662,7 @@ def modify_reference_into_scene(ref_pil, target_w, target_h, scene_idx, art_styl
 
 
 def generate_cloudflare_flux_image(cf_account_id, cf_api_token, prompt_text, target_w, target_h, seed=42):
-    """Call Cloudflare Workers AI FLUX.1 [schnell] REST API using schema-valid inputs."""
+    """Call Cloudflare Workers AI FLUX.1 [schnell] REST API using strictly valid schema fields."""
     url = (
         f"https://api.cloudflare.com/client/v4/accounts/{cf_account_id.strip()}"
         "/ai/run/@cf/black-forest-labs/flux-1-schnell"
@@ -469,8 +679,6 @@ def generate_cloudflare_flux_image(cf_account_id, cf_api_token, prompt_text, tar
     bounded_prompt = f"{prompt_text.strip()}, {aspect_hint}"[:2048]
     payload = {
         "prompt": bounded_prompt,
-        "steps": 4,
-        "seed": int(abs(seed)) % 2147483647,
     }
     resp = requests.post(url, headers=headers, json=payload, timeout=90)
     if not resp.ok:
@@ -527,14 +735,18 @@ def generate_real_ai_scene(
     target_h,
     scene_idx,
     ref_pil=None,
+    allow_local_bypass=True,
+    emotion_label="",
+    seed_offset=0,
 ):
-    """Generate AI scene images with automatic failover across configured engines & Pollinations."""
+    """Generate AI scene images with automatic failover across engines and local bypass fallback."""
     errors = []
+    scene_seed = 100 + scene_idx * 37 + seed_offset
 
     def try_cloudflare():
         if cf_account_id.strip() and cf_api_token.strip():
             img = generate_cloudflare_flux_image(
-                cf_account_id, cf_api_token, prompt_text, target_w, target_h, seed=100 + scene_idx
+                cf_account_id, cf_api_token, prompt_text, target_w, target_h, seed=scene_seed
             )
             return img, "Cloudflare FLUX.1-schnell"
         raise RuntimeError("Missing Cloudflare Account ID or API Token.")
@@ -591,7 +803,7 @@ def generate_real_ai_scene(
         raise RuntimeError(str(last_gem_err))
 
     def try_pollinations():
-        img = generate_pollinations_image(prompt_text, target_w, target_h, seed=200 + scene_idx)
+        img = generate_pollinations_image(prompt_text, target_w, target_h, seed=200 + scene_seed)
         return img, "Pollinations AI Fallback"
 
     if engine_choice == "Cloudflare Workers AI (Free Daily FLUX)":
@@ -630,12 +842,19 @@ def generate_real_ai_scene(
             errors,
         )
 
+    if allow_local_bypass:
+        return (
+            build_local_bypass_scene(prompt_text, target_w, target_h, scene_idx, emotion_label=emotion_label),
+            "Local Storyboard Bypass",
+            errors,
+        )
+
     return None, None, errors
 
 
 st.title("🎬 AI Animated Story Studio")
 st.caption(
-    "Multi-engine AI scene failover, locked character count & faces, interactive English & Kannada story editor, voiceovers, lip-sync, and exact-size MP4 export."
+    "Multi-engine AI scene failover, local bypass fallback, locked character count & faces, interactive English & Kannada story editor, voiceovers, lip-sync, and exact-size MP4 export."
 )
 
 with st.sidebar:
@@ -689,8 +908,8 @@ with tab1:
     st.subheader("Write Your Rough Idea & Edit English / Kannada Script")
     rough_story = st.text_area(
         "Type your rough story in any style (even broken sentences):",
-        placeholder="e.g., 4 hostel boys walk near a forest village, a giant bear appears, two climb a tree, one lies still holding breath, and learns who a true friend is.",
-        height=120,
+        value="A 35-year-old man in a corporate office experiences dense emotions and tense reactions through high-stakes work situations, sudden setbacks, and quiet inner resolve.",
+        height=110,
     )
     num_scenes = st.slider("Number of Scenes", 3, 6, 4)
 
@@ -705,7 +924,8 @@ with tab1:
                 st.session_state[f"nar_{idx}"] = sc["narration"]
                 st.session_state[f"kn_script_{idx}"] = sc["kannada_narration"]
                 st.session_state[f"vis_{idx}"] = sc["visual"]
-            st.warning("No Gemini API Key provided—created structured scenes directly from your rough story.")
+                st.session_state[f"emo_{idx}"] = sc.get("emotion", "Dense Emotion")
+            st.warning("No Gemini API Key provided—created distinct emotional corporate scenes directly from your rough story.")
         else:
             fallback_models = [
                 "gemini-3.8-flash",
@@ -714,17 +934,18 @@ with tab1:
                 "gemini-3.1-flash-lite",
             ]
             char_context = (
-                f"\nStrict cast lock: Keep exact character count ({st.session_state.exact_character_count} main characters) and consistent faces/outfits across every scene: {st.session_state.locked_character_prompt}"
+                f"\nStrict cast lock: Keep exact character count ({st.session_state.exact_character_count} main character(s)) and consistent identity/outfit across every scene: {st.session_state.locked_character_prompt}"
                 if st.session_state.lock_character_enabled
                 else ""
             )
             prompt = f"""
-            Fix and rewrite this rough story into an engaging {num_scenes}-scene story script.{char_context}
+            Fix and rewrite this rough story into an engaging {num_scenes}-scene story script with distinct emotional reactions and corporate office settings per scene.{char_context}
             Return ONLY valid JSON as a list of objects, with no markdown formatting.
             Each object must have:
             - "narration": clear, emotional English voiceover text (1-2 sentences)
             - "kannada_narration": natural, clear Kannada translation/script of that scene's voiceover (1-2 sentences)
-            - "visual": detailed visual action description for that scene (action, setting, lighting, composition)
+            - "emotion": specific emotion & facial reaction for that scene (e.g., "Overwhelmed & Tense", "Shocked & Guarded", "Sorrowful & Drained", "Resolute & Composed")
+            - "visual": distinct medium or wide corporate office visual description (specific office spot, camera framing, lighting, posture, and facial expression)
             Rough story: {rough_story.strip()}
             """
             client = genai.Client(api_key=api_key.strip())
@@ -766,6 +987,7 @@ with tab1:
                     {
                         "narration": str(item.get("narration", "")).strip(),
                         "kannada_narration": str(item.get("kannada_narration", "")).strip(),
+                        "emotion": str(item.get("emotion", "Dense Emotion")).strip(),
                         "visual": str(item.get("visual", "")).strip(),
                     }
                     for item in parsed_scenes
@@ -774,6 +996,7 @@ with tab1:
                     st.session_state[f"nar_{idx}"] = sc["narration"]
                     st.session_state[f"kn_script_{idx}"] = sc["kannada_narration"]
                     st.session_state[f"vis_{idx}"] = sc["visual"]
+                    st.session_state[f"emo_{idx}"] = sc["emotion"]
                     st.session_state.kannada_subtitles[idx] = sc["kannada_narration"]
                 st.success("English & Kannada scripts ready! Edit any scene below or move to Tab 2.")
             else:
@@ -784,7 +1007,8 @@ with tab1:
                     st.session_state[f"nar_{idx}"] = sc["narration"]
                     st.session_state[f"kn_script_{idx}"] = sc["kannada_narration"]
                     st.session_state[f"vis_{idx}"] = sc["visual"]
-                st.warning(f"Gemini quota/error hit ({last_exc})—created fallback scenes so you can keep working.")
+                    st.session_state[f"emo_{idx}"] = sc.get("emotion", "Dense Emotion")
+                st.warning(f"Gemini quota/error hit ({last_exc})—created distinct fallback scenes so you can keep working.")
 
     if st.session_state.scenes:
         st.markdown("### ✏️ Interactive Story Editor (English Script, Kannada Script & Visuals)")
@@ -808,7 +1032,7 @@ with tab1:
                     st.rerun()
 
         for i, scene in enumerate(st.session_state.scenes):
-            with st.expander(f"Scene {i + 1} Editor", expanded=True):
+            with st.expander(f"Scene {i + 1} Editor ({scene.get('emotion', 'Emotion')})", expanded=True):
                 col_a, col_b = st.columns(2)
                 with col_a:
                     nar_val = st.text_area(
@@ -817,6 +1041,12 @@ with tab1:
                         key=f"nar_{i}",
                     )
                     scene["narration"] = nar_val
+                    emo_val = st.text_input(
+                        f"Scene {i + 1} Emotion / Facial Reaction",
+                        value=scene.get("emotion", "Dense Emotion"),
+                        key=f"emo_{i}",
+                    )
+                    scene["emotion"] = emo_val
                     vis_val = st.text_input(
                         f"Scene {i + 1} Action / Camera Visual",
                         value=scene.get("visual", ""),
@@ -854,9 +1084,9 @@ with tab2:
     art_style = st.selectbox(
         "Choose Visual Style",
         [
-            "Photorealistic cinematic film still, natural sunlight, lifelike human expressions and real wildlife detail, 35mm lens",
-            "High-detail 3D CGI animation, expressive lifelike characters, rich forest lighting and depth",
-            "Detailed storybook illustration, expressive characters, lush forest scenery",
+            "Photorealistic cinematic film still, medium or wide framing showing full head and shoulders, natural corporate lighting, lifelike human expressions, 35mm lens",
+            "High-detail 3D CGI animation, expressive lifelike characters, rich corporate office lighting and depth",
+            "Detailed storybook illustration, expressive characters, modern corporate office scenery",
         ],
     )
 
@@ -875,7 +1105,14 @@ with tab2:
             type=["png", "jpg", "jpeg", "webp"],
         )
 
-    scene_count_fallback = st.slider("Number of Scenes", 2, 6, 4)
+    bypass_col1, bypass_col2 = st.columns([1.4, 1.6])
+    with bypass_col1:
+        scene_count_fallback = st.slider("Number of Scenes", 2, 6, len(st.session_state.scenes) or 4)
+    with bypass_col2:
+        allow_local_bypass = st.checkbox(
+            "Enable zero-API local bypass frames if all external image APIs fail/quota-out",
+            value=True,
+        )
 
     ref_pil = None
     if ref_file is not None:
@@ -885,21 +1122,15 @@ with tab2:
     if st.button("🎨 Generate Scene Artwork", type="primary"):
         active_scenes = st.session_state.scenes
         if not active_scenes:
-            default_actions = [
-                "four teenage boys walking together along a forest path beside a village in golden morning light",
-                "a large brown bear emerging from dense forest trees while the boys react in shock",
-                "two boys climbing tall forest trees while one boy lies still on the ground holding his breath",
-                "the large brown bear sniffing near the boy on the ground before walking back into the woods",
-            ]
-            active_scenes = [
-                {
-                    "narration": f"Scene {i + 1} narration.",
-                    "kannada_narration": "",
-                    "visual": default_actions[i % len(default_actions)],
-                }
-                for i in range(scene_count_fallback)
-            ]
+            active_scenes = build_fallback_scenes_from_rough_story(
+                "A 35-year-old man in a corporate office experiences dense emotions and tense reactions",
+                scene_count_fallback,
+                st.session_state.locked_character_prompt,
+            )
             st.session_state.scenes = active_scenes
+
+        st.session_state.gen_batch_id += 1
+        batch_id = st.session_state.gen_batch_id
 
         char_to_use = (
             st.session_state.locked_character_prompt
@@ -907,8 +1138,8 @@ with tab2:
             else active_char_prompt
         )
         cast_guard = (
-            f"Exact character count: {int(st.session_state.exact_character_count)} main characters. "
-            f"Keep identical faces, hair, and outfits from {char_to_use}. Do not add extra background people."
+            f"Exact character count: {int(st.session_state.exact_character_count)} main subject. "
+            f"Keep consistent identity and outfit from {char_to_use}, framed with headroom so face and eyes are never cropped."
             if st.session_state.lock_character_enabled
             else char_to_use
         )
@@ -920,10 +1151,13 @@ with tab2:
 
         for idx, scene in enumerate(active_scenes):
             if idx > 0:
-                time.sleep(1.0)
+                time.sleep(0.4)
+            scene_vis = st.session_state.get(f"vis_{idx}", scene.get("visual", ""))
+            scene_emo = st.session_state.get(f"emo_{idx}", scene.get("emotion", "Dense Emotion"))
             full_prompt = (
                 f"{art_style}. {cast_guard} "
-                f"Scene {idx + 1} action: {scene['visual']}"
+                f"Scene {idx + 1} emotion: {scene_emo}. "
+                f"Scene {idx + 1} action & office setting: {scene_vis}"
             ).strip()
 
             pil_img, src_name, src_errs = generate_real_ai_scene(
@@ -938,13 +1172,16 @@ with tab2:
                 target_h=height,
                 scene_idx=idx,
                 ref_pil=ref_pil,
+                allow_local_bypass=allow_local_bypass,
+                emotion_label=scene_emo,
+                seed_offset=batch_id * 100,
             )
             if src_errs:
                 all_errors.extend([f"Scene {idx + 1}: {e}" for e in src_errs])
 
             if pil_img is not None:
                 exact_img = ensure_exact_size(pil_img, width, height)
-                img_path = f"scene_{idx}.png"
+                img_path = f"scene_{idx}_b{batch_id}.png"
                 exact_img.save(img_path, format="PNG")
                 st.session_state.images.append(img_path)
                 used_sources.append(src_name or "AI")
@@ -953,11 +1190,11 @@ with tab2:
 
         if st.session_state.images:
             st.success(
-                f"Generated {len(st.session_state.images)} scenes at exact {width}x{height} ({', '.join(set(used_sources))})."
+                f"Generated {len(st.session_state.images)} distinct scenes at exact {width}x{height} ({', '.join(set(used_sources))})."
             )
         else:
             st.error(
-                "No AI image was generated across any engine. Expand API / Quota Details below to inspect provider responses."
+                "No scene image was generated across any engine. Enable local bypass or inspect API / Quota Details below."
             )
 
         if all_errors:
@@ -969,7 +1206,9 @@ with tab2:
         cols = st.columns(2)
         for idx, img_path in enumerate(st.session_state.images):
             if os.path.exists(img_path):
-                cols[idx % 2].image(img_path, caption=f"Scene {idx + 1} ({width}x{height})", use_container_width=True)
+                emo_cap = st.session_state.scenes[idx].get("emotion", "") if idx < len(st.session_state.scenes) else ""
+                cap_txt = f"Scene {idx + 1} • {emo_cap} ({width}x{height})" if emo_cap else f"Scene {idx + 1} ({width}x{height})"
+                cols[idx % 2].image(img_path, caption=cap_txt, use_container_width=True)
 
 # --- TAB 3: VOICE & SOUND ---
 with tab3:
@@ -1040,9 +1279,9 @@ with tab3:
                         active_script_lines[0]
                         if active_script_lines
                         else (
-                            "ಒಂದು ಕಾಲದಲ್ಲಿ, ಒಂದು ಸಣ್ಣ ಕಿಡಿ ಎಲ್ಲವನ್ನೂ ಬದಲಾಯಿಸಿತು."
+                            "ಮೂವತ್ತೈದರ ವಯಸ್ಸಿನಲ್ಲಿ, ಕಚೇರಿಯ ಪ್ರತಿಯೊಂದು ಗಡುವು ಮೊದಲಿಗಿಂತ ಹೆಚ್ಚು ಭಾರವಾಗಿ ಭಾಸವಾಗುತ್ತದೆ."
                             if selected_script_lang == "Kannada"
-                            else "Once upon a time, a small spark changed everything."
+                            else "At thirty-five, every deadline in the corporate office feels heavier than the last."
                         )
                     )
                     run_async(make_audio(sample_text, voice_id, "sample.mp3"))
@@ -1238,7 +1477,7 @@ with tab4:
             clips = []
             audio_clips = []
             final_video = None
-            output_file = "animated_story.mp4"
+            output_file = f"animated_story_b{st.session_state.gen_batch_id}.mp4"
 
             try:
                 with st.spinner(
