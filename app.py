@@ -7,6 +7,7 @@ from io import BytesIO
 
 import edge_tts
 import fal_client
+import numpy as np
 import requests
 import streamlit as st
 from google import genai
@@ -78,21 +79,73 @@ def apply_subclip(clip, start_t, end_t):
     return clip.subclipped(start_t, end_t) if MOVIEPY_V2 else clip.subclip(start_t, end_t)
 
 
-def fit_image_to_frame(img_path, target_w, target_h):
-    """Resize and crop an image cleanly to exact (target_w, target_h) using Pillow."""
+def build_motion_clip(img_path, target_w, target_h, duration, motion_mode="Auto Alternate", scene_idx=0):
+    """Create a smooth zoom/pan video clip from a still image using Pillow + NumPy."""
     resampling = getattr(Image, "Resampling", Image).LANCZOS
+    modes = ["Zoom In", "Pan Right", "Zoom Out", "Pan Left"]
+    active_mode = modes[scene_idx % len(modes)] if motion_mode == "Auto Alternate" else motion_mode
+
+    # Overscan canvas by 16% so zooming and panning never show black borders
+    overscan = 1.16
+    canvas_w = int(round(target_w * overscan))
+    canvas_h = int(round(target_h * overscan))
+
     with Image.open(img_path) as im:
         rgb = im.convert("RGB")
-        scale = max(target_w / rgb.width, target_h / rgb.height)
-        new_w = max(1, int(round(rgb.width * scale)))
-        new_h = max(1, int(round(rgb.height * scale)))
-        resized = rgb.resize((new_w, new_h), resampling)
-        left = max(0, (new_w - target_w) // 2)
-        top = max(0, (new_h - target_h) // 2)
-        cropped = resized.crop((left, top, left + target_w, top + target_h))
-        fitted_path = f"fitted_{os.path.basename(img_path)}"
-        cropped.save(fitted_path, format="JPEG", quality=92)
-        return fitted_path
+        cover_scale = max(canvas_w / max(1, rgb.width), canvas_h / max(1, rgb.height))
+        base_w = max(canvas_w, int(round(rgb.width * cover_scale)))
+        base_h = max(canvas_h, int(round(rgb.height * cover_scale)))
+        base_resized = rgb.resize((base_w, base_h), resampling)
+        left_pad = max(0, (base_w - canvas_w) // 2)
+        top_pad = max(0, (base_h - canvas_h) // 2)
+        canvas_np = np.asarray(
+            base_resized.crop((left_pad, top_pad, left_pad + canvas_w, top_pad + canvas_h)),
+            dtype=np.uint8,
+        )
+
+    safe_dur = max(float(duration), 0.1)
+
+    def make_frame(t):
+        progress = min(max(float(t) / safe_dur, 0.0), 1.0)
+        # Smooth ease-in-out curve
+        ease = progress * progress * (3.0 - 2.0 * progress)
+
+        if active_mode == "Zoom In":
+            scale = 1.0 + 0.13 * ease
+            win_w = max(2, int(round(target_w / scale)))
+            win_h = max(2, int(round(target_h / scale)))
+            x0 = (canvas_w - win_w) // 2
+            y0 = (canvas_h - win_h) // 2
+        elif active_mode == "Zoom Out":
+            scale = 1.13 - 0.13 * ease
+            win_w = max(2, int(round(target_w / scale)))
+            win_h = max(2, int(round(target_h / scale)))
+            x0 = (canvas_w - win_w) // 2
+            y0 = (canvas_h - win_h) // 2
+        elif active_mode == "Pan Right":
+            win_w = target_w
+            win_h = target_h
+            max_x = max(0, canvas_w - win_w)
+            x0 = int(round(max_x * ease))
+            y0 = max(0, (canvas_h - win_h) // 2)
+        else:  # "Pan Left"
+            win_w = target_w
+            win_h = target_h
+            max_x = max(0, canvas_w - win_w)
+            x0 = int(round(max_x * (1.0 - ease)))
+            y0 = max(0, (canvas_h - win_h) // 2)
+
+        x0 = min(max(0, x0), max(0, canvas_w - win_w))
+        y0 = min(max(0, y0), max(0, canvas_h - win_h))
+        cropped = canvas_np[y0 : y0 + win_h, x0 : x0 + win_w]
+
+        if win_w != target_w or win_h != target_h:
+            frame_pil = Image.fromarray(cropped).resize((target_w, target_h), resampling)
+            return np.asarray(frame_pil, dtype=np.uint8)
+        return cropped
+
+    clip = ImageClip(make_frame)
+    return apply_duration(clip, duration)
 
 
 def generate_scene_image_gemini(gemini_key, prompt_text, ratio_str):
@@ -425,6 +478,11 @@ with tab3:
 # --- TAB 4: RENDER & DOWNLOAD ---
 with tab4:
     st.subheader("Assemble & Download Final Movie")
+    free_motion_style = st.selectbox(
+        "Free Camera Motion (for Scene Images)",
+        ["Auto Alternate", "Zoom In", "Zoom Out", "Pan Right", "Pan Left"],
+    )
+
     if st.button("🎬 Render Final MP4 Video", type="primary"):
         if not st.session_state.images or not st.session_state.audio_files:
             st.error("Make sure both Scene Artwork (Tab 2) and Narration (Tab 3) are generated.")
@@ -435,7 +493,7 @@ with tab4:
             output_file = "animated_story.mp4"
 
             try:
-                with st.spinner("Stitching scenes and exporting MP4..."):
+                with st.spinner("Applying camera motion, stitching scenes, and exporting MP4..."):
                     use_moving_clips = len(st.session_state.scene_clips) == len(st.session_state.audio_files)
 
                     for i, aud_p in enumerate(st.session_state.audio_files):
@@ -451,10 +509,15 @@ with tab4:
                             trimmed = apply_subclip(vid, 0, target_duration)
                             scene_clip = apply_audio(trimmed, audio_clip)
                         else:
-                            fitted_img = fit_image_to_frame(st.session_state.images[i], width, height)
-                            img_c = ImageClip(fitted_img)
-                            img_c = apply_duration(img_c, target_duration)
-                            scene_clip = apply_audio(img_c, audio_clip)
+                            motion_clip = build_motion_clip(
+                                st.session_state.images[i],
+                                width,
+                                height,
+                                target_duration,
+                                motion_mode=free_motion_style,
+                                scene_idx=i,
+                            )
+                            scene_clip = apply_audio(motion_clip, audio_clip)
                         clips.append(scene_clip)
 
                     final_video = concatenate_videoclips(clips, method="compose")
