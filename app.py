@@ -33,6 +33,7 @@ for key, default in [
     ("scenes", []),
     ("images", []),
     ("audio_files", []),
+    ("custom_audio_paths", []),
 ]:
     if key not in st.session_state:
         st.session_state[key] = default
@@ -96,7 +97,7 @@ def translate_lines_to_kannada(gemini_key, lines):
 
     client = genai.Client(api_key=gemini_key.strip())
     prompt = (
-        "Translate each string in this JSON array into natural, easy-to-read Kannada subtitles. "
+        "Translate each string in this JSON array into natural, easy-to-read Kannada. "
         "Return ONLY a valid JSON array of strings in the exact same order, with no markdown.\n"
         + json.dumps(lines, ensure_ascii=False)
     )
@@ -612,48 +613,115 @@ with tab2:
 with tab3:
     st.subheader("Select Narrator Voice")
     voice_map = {
-        "Warm Male Storyteller (US)": "en-US-ChristopherNeural",
-        "Expressive Female Storyteller (US)": "en-US-AriaNeural",
-        "Indian Male Narrator": "en-IN-PrabhatNeural",
-        "Indian Female Narrator": "en-IN-NeerjaNeural",
-        "British Documentary Male": "en-GB-RyanNeural",
+        "Warm Male Storyteller (US)": ("en-US-ChristopherNeural", "English"),
+        "Expressive Female Storyteller (US)": ("en-US-AriaNeural", "English"),
+        "Indian Male Narrator (English)": ("en-IN-PrabhatNeural", "English"),
+        "Indian Female Narrator (English)": ("en-IN-NeerjaNeural", "English"),
+        "Kannada Male Narrator (ಕನ್ನಡ - Gagan)": ("kn-IN-GaganNeural", "Kannada"),
+        "Kannada Female Narrator (ಕನ್ನಡ - Sapna)": ("kn-IN-SapnaNeural", "Kannada"),
+        "British Documentary Male": ("en-GB-RyanNeural", "English"),
+        "My Own Voice (Upload Recording)": (None, "Custom"),
     }
     selected_voice = st.selectbox("Voice Options", list(voice_map.keys()))
+    voice_id, voice_lang = voice_map[selected_voice]
 
     async def make_audio(text, voice, filename):
         communicate = edge_tts.Communicate(text, voice)
         await communicate.save(filename)
 
-    if st.button("🎙️ Preview Sample Voice"):
-        try:
-            with st.spinner("Generating voice sample..."):
-                run_async(
-                    make_audio(
-                        "Once upon a time, a small spark changed everything.",
-                        voice_map[selected_voice],
-                        "sample.mp3",
-                    )
-                )
-            st.audio("sample.mp3")
-        except Exception as exc:
-            st.error(f"Could not generate sample audio: {exc}")
-
-    if st.button("🔊 Generate Full Story Narration", type="primary"):
-        if not st.session_state.scenes:
-            st.warning("Generate your script in Tab 1 first.")
-        else:
+    if voice_id:
+        if st.button("🎙️ Preview Sample Voice"):
             try:
-                st.session_state.audio_files = []
-                progress = st.progress(0)
-                for idx, scene in enumerate(st.session_state.scenes):
-                    narration_text = scene["narration"].strip() or f"Scene {idx + 1}."
-                    aud_path = f"voice_{idx}.mp3"
-                    run_async(make_audio(narration_text, voice_map[selected_voice], aud_path))
-                    st.session_state.audio_files.append(aud_path)
-                    progress.progress((idx + 1) / len(st.session_state.scenes))
-                st.success("All voiceovers recorded! Go to Tab 4 to render.")
+                with st.spinner("Generating voice sample..."):
+                    sample_text = (
+                        "ಒಂದು ಕಾಲದಲ್ಲಿ, ಒಂದು ಸಣ್ಣ ಕಿಡಿ ಎಲ್ಲವನ್ನೂ ಬದಲಾಯಿಸಿತು."
+                        if voice_lang == "Kannada"
+                        else "Once upon a time, a small spark changed everything."
+                    )
+                    run_async(make_audio(sample_text, voice_id, "sample.mp3"))
+                st.audio("sample.mp3")
             except Exception as exc:
-                st.error(f"Error generating narration audio: {exc}")
+                st.error(f"Could not generate sample audio: {exc}")
+
+        if st.button("🔊 Generate Full Story Narration", type="primary"):
+            if not st.session_state.scenes:
+                st.warning("Generate your script in Tab 1 first.")
+            else:
+                try:
+                    raw_lines = [
+                        (s.get("narration") or f"Scene {idx + 1}.").strip()
+                        for idx, s in enumerate(st.session_state.scenes)
+                    ]
+                    spoken_lines = raw_lines
+                    if voice_lang == "Kannada" and api_key and api_key.strip():
+                        with st.spinner("Translating scene narration to Kannada & generating voiceovers..."):
+                            spoken_lines = translate_lines_to_kannada(api_key, raw_lines)
+                    else:
+                        with st.spinner("Generating voiceovers..."):
+                            pass
+
+                    st.session_state.audio_files = []
+                    progress = st.progress(0)
+                    for idx, line_text in enumerate(spoken_lines):
+                        aud_path = f"voice_{idx}.mp3"
+                        run_async(make_audio(line_text, voice_id, aud_path))
+                        st.session_state.audio_files.append(aud_path)
+                        progress.progress((idx + 1) / len(spoken_lines))
+                    st.success("All voiceovers recorded! Go to Tab 4 to render.")
+                except Exception as exc:
+                    st.error(f"Error generating narration audio: {exc}")
+    else:
+        st.info(
+            "Upload your own recorded voice files below (either one audio file for the full story or separate files per scene)."
+        )
+        uploaded_voices = st.file_uploader(
+            "Upload Your Voice Recording (.mp3, .wav, .m4a, .ogg)",
+            type=["mp3", "wav", "m4a", "ogg"],
+            accept_multiple_files=True,
+        )
+        if st.button("💾 Use My Uploaded Voice", type="primary"):
+            if not uploaded_voices:
+                st.error("Please upload at least one voice recording first.")
+            else:
+                os.makedirs("custom_voice", exist_ok=True)
+                saved_paths = []
+                for idx, up_file in enumerate(uploaded_voices):
+                    ext = os.path.splitext(up_file.name)[1].lower() or ".mp3"
+                    out_p = os.path.join("custom_voice", f"my_voice_{idx}{ext}")
+                    with open(out_p, "wb") as f:
+                        f.write(up_file.getbuffer())
+                    saved_paths.append(out_p)
+
+                scene_total = max(len(st.session_state.scenes), len(st.session_state.images), 1)
+                if len(saved_paths) == 1 and scene_total > 1:
+                    # Split or assign the single uploaded voice clip across scenes evenly
+                    full_clip = AudioFileClip(saved_paths[0])
+                    try:
+                        total_dur = max(float(full_clip.duration or 4.0), 1.0)
+                        seg_dur = total_dur / scene_total
+                        split_paths = []
+                        for s_i in range(scene_total):
+                            start_t = s_i * seg_dur
+                            end_t = min(total_dur, (s_i + 1) * seg_dur)
+                            seg_clip = (
+                                full_clip.subclipped(start_t, end_t)
+                                if hasattr(full_clip, "subclipped")
+                                else full_clip.subclip(start_t, end_t)
+                            )
+                            seg_path = os.path.join("custom_voice", f"scene_voice_{s_i}.mp3")
+                            seg_clip.write_audiofile(seg_path, logger=None)
+                            seg_clip.close()
+                            split_paths.append(seg_path)
+                        st.session_state.audio_files = split_paths
+                    finally:
+                        full_clip.close()
+                else:
+                    st.session_state.audio_files = saved_paths[:scene_total]
+
+                st.success(f"Saved {len(st.session_state.audio_files)} voice track(s)! Go to Tab 4 to render.")
+
+        if st.session_state.audio_files:
+            st.audio(st.session_state.audio_files[0])
 
 # --- TAB 4: RENDER & DOWNLOAD ---
 with tab4:
@@ -700,6 +768,8 @@ with tab4:
                         sub_lines = [""] * len(st.session_state.audio_files)
 
                     for i, aud_p in enumerate(st.session_state.audio_files):
+                        if i >= len(st.session_state.images):
+                            break
                         audio_clip = AudioFileClip(aud_p)
                         audio_clips.append(audio_clip)
                         target_duration = max(audio_clip.duration + 0.3, 1.0)
