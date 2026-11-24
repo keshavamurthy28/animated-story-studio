@@ -11,9 +11,8 @@ import numpy as np
 import requests
 import streamlit as st
 from google import genai
-from google.genai import types
 from huggingface_hub import InferenceClient
-from PIL import Image
+from PIL import Image, ImageDraw
 
 try:
     from moviepy.editor import AudioFileClip, ImageClip, VideoFileClip, concatenate_videoclips
@@ -85,7 +84,6 @@ def build_motion_clip(img_path, target_w, target_h, duration, motion_mode="Auto 
     modes = ["Zoom In", "Pan Right", "Zoom Out", "Pan Left"]
     active_mode = modes[scene_idx % len(modes)] if motion_mode == "Auto Alternate" else motion_mode
 
-    # Overscan canvas by 16% so zooming and panning never show black borders
     overscan = 1.16
     canvas_w = int(round(target_w * overscan))
     canvas_h = int(round(target_h * overscan))
@@ -107,7 +105,6 @@ def build_motion_clip(img_path, target_w, target_h, duration, motion_mode="Auto 
 
     def make_frame(t):
         progress = min(max(float(t) / safe_dur, 0.0), 1.0)
-        # Smooth ease-in-out curve
         ease = progress * progress * (3.0 - 2.0 * progress)
 
         if active_mode == "Zoom In":
@@ -128,7 +125,7 @@ def build_motion_clip(img_path, target_w, target_h, duration, motion_mode="Auto 
             max_x = max(0, canvas_w - win_w)
             x0 = int(round(max_x * ease))
             y0 = max(0, (canvas_h - win_h) // 2)
-        else:  # "Pan Left"
+        else:
             win_w = target_w
             win_h = target_h
             max_x = max(0, canvas_w - win_w)
@@ -148,57 +145,45 @@ def build_motion_clip(img_path, target_w, target_h, duration, motion_mode="Auto 
     return apply_duration(clip, duration)
 
 
-def generate_scene_image_gemini(gemini_key, prompt_text, ratio_str):
-    """Generate an image using Gemini image models via google-genai."""
-    client = genai.Client(api_key=gemini_key.strip())
-    image_models = ["gemini-3.1-flash-lite-image", "gemini-3.1-flash-image"]
-    last_err = None
-
-    for model_id in image_models:
-        try:
-            response = client.models.generate_content(
-                model=model_id,
-                contents=prompt_text,
-                config=types.GenerateContentConfig(
-                    response_modalities=["IMAGE"],
-                    image_config=types.ImageConfig(aspect_ratio=ratio_str),
-                ),
-            )
-            candidates = getattr(response, "candidates", None) or []
-            for cand in candidates:
-                content = getattr(cand, "content", None)
-                parts = getattr(content, "parts", None) or []
-                for part in parts:
-                    inline = getattr(part, "inline_data", None)
-                    if inline and getattr(inline, "data", None):
-                        return Image.open(BytesIO(inline.data)).convert("RGB")
-            raise ValueError(f"No inline image returned by {model_id}")
-        except Exception as exc:
-            last_err = exc
-    raise RuntimeError(f"Gemini image generation failed: {last_err}")
+def make_scene_fallback_card(scene_idx, prompt_text, target_w, target_h):
+    """Create a clean gradient storyboard card if an external model times out."""
+    img = Image.new("RGB", (target_w, target_h), color=(24, 34, 54))
+    draw = ImageDraw.Draw(img)
+    draw.rectangle([24, 24, target_w - 24, target_h - 24], outline=(245, 185, 66), width=4)
+    draw.text((48, 60), f"Scene {scene_idx + 1} Storyboard", fill=(255, 220, 120))
+    wrapped = [prompt_text[i : i + 42] for i in range(0, min(len(prompt_text), 252), 42)]
+    y_pos = 120
+    for line in wrapped:
+        draw.text((48, y_pos), line, fill=(240, 244, 248))
+        y_pos += 28
+    return img
 
 
-def generate_scene_image_hf(hf_token, prompt_text, target_w, target_h):
-    """Generate an image via Hugging Face InferenceClient."""
+def generate_scene_image_hf(hf_token, prompt_text, target_w, target_h, scene_idx=0):
+    """Generate an image via Hugging Face InferenceClient with multi-model fallback."""
     client = InferenceClient(token=hf_token.strip())
     hf_models = [
         "black-forest-labs/FLUX.1-schnell",
-        "stabilityai/sdxl-turbo",
+        "stabilityai/stable-diffusion-xl-base-1.0",
     ]
     last_err = None
 
     for model_id in hf_models:
-        try:
-            pil_img = client.text_to_image(
-                prompt=prompt_text,
-                model=model_id,
-                width=target_w,
-                height=target_h,
-            )
-            return pil_img.convert("RGB")
-        except Exception as exc:
-            last_err = exc
-    raise RuntimeError(f"Hugging Face image generation failed: {last_err}")
+        for attempt in range(2):
+            try:
+                pil_img = client.text_to_image(
+                    prompt=prompt_text,
+                    model=model_id,
+                    width=target_w,
+                    height=target_h,
+                )
+                return pil_img.convert("RGB"), None
+            except Exception as exc:
+                last_err = exc
+                time.sleep(1.5 * (attempt + 1))
+
+    fallback_img = make_scene_fallback_card(scene_idx, prompt_text, target_w, target_h)
+    return fallback_img, str(last_err)
 
 
 st.title("🎬 AI Animated Story Studio")
@@ -211,8 +196,8 @@ with st.sidebar:
     image_provider = st.selectbox(
         "Free Scene Image Engine",
         [
-            "Gemini Image (uses Gemini API Key)",
             "Hugging Face Inference (uses HF Token)",
+            "Storyboard Card Fallback (No Token)",
         ],
     )
     fal_key = st.text_input("fal.ai API Key (optional paid I2V)", type="password")
@@ -227,9 +212,9 @@ with st.sidebar:
     )
     aspect_ratio = st.selectbox("Video Format", ["9:16 (Reels / Shorts)", "16:9 (YouTube)"])
     if "9:16" in aspect_ratio:
-        width, height, ratio_str = 720, 1280, "9:16"
+        width, height = 720, 1280
     else:
-        width, height, ratio_str = 1280, 720, "16:9"
+        width, height = 1280, 720
 
 tab1, tab2, tab3, tab4 = st.tabs([
     "1️⃣ Rough Story",
@@ -340,41 +325,59 @@ with tab2:
     )
     char_desc = st.text_input(
         "Describe your main character(s) (keeps them looking the same in every scene):",
-        placeholder="e.g., Four teenage boys aged 12-15 in hostel uniforms and a large brown forest bear",
+        value="4 teenage 12-15 years old, one guy fat, one guy lean and other guy slim. a bear which is very giant and huge bulky one",
     )
+    scene_count_fallback = st.slider("Scenes to Generate (if Tab 1 script wasn't created)", 2, 6, 4)
 
     if st.button("🎨 Generate Scene Artwork", type="primary"):
-        if not st.session_state.scenes:
-            st.warning("Please generate your script in Tab 1 first.")
-        elif image_provider.startswith("Gemini") and not api_key.strip():
-            st.error("Enter your Gemini API Key in the sidebar (or switch to Hugging Face Inference).")
-        elif image_provider.startswith("Hugging Face") and not hf_token.strip():
-            st.error("Enter your Hugging Face Token in the sidebar (or switch to Gemini Image).")
+        if image_provider.startswith("Hugging Face") and not hf_token.strip():
+            st.error("Please paste a free Hugging Face Token from huggingface.co/settings/tokens in the sidebar (or choose Storyboard Card Fallback).")
         else:
+            active_scenes = st.session_state.scenes
+            if not active_scenes:
+                default_actions = [
+                    "walking together near a lush forest edge beside a quiet village at daytime",
+                    "spot a giant huge bulky brown bear emerging from dense forest trees in shock",
+                    "two boys quickly climbing tall trees while one boy lies flat and holds his breath on the ground",
+                    "the giant bear sniffing near the boy on the ground and walking away into the woods",
+                ]
+                active_scenes = [
+                    {
+                        "narration": f"Scene {i + 1} narration.",
+                        "visual": default_actions[i % len(default_actions)],
+                    }
+                    for i in range(scene_count_fallback)
+                ]
+                st.session_state.scenes = active_scenes
+
             st.session_state.images = []
             st.session_state.scene_clips = []
             progress = st.progress(0)
+            warnings_list = []
 
-            try:
-                for idx, scene in enumerate(st.session_state.scenes):
-                    full_prompt = (
-                        f"{art_style}. Consistent characters: {char_desc}. "
-                        f"Scene action: {scene['visual']}"
-                    ).strip()
+            for idx, scene in enumerate(active_scenes):
+                full_prompt = (
+                    f"{art_style}. Characters: {char_desc}. "
+                    f"Scene {idx + 1} action: {scene['visual']}"
+                ).strip()
 
-                    if image_provider.startswith("Gemini"):
-                        pil_img = generate_scene_image_gemini(api_key, full_prompt, ratio_str)
-                    else:
-                        pil_img = generate_scene_image_hf(hf_token, full_prompt, width, height)
+                if image_provider.startswith("Hugging Face"):
+                    pil_img, err_msg = generate_scene_image_hf(
+                        hf_token, full_prompt, width, height, scene_idx=idx
+                    )
+                    if err_msg:
+                        warnings_list.append(f"Scene {idx + 1} used fallback card: {err_msg}")
+                else:
+                    pil_img = make_scene_fallback_card(idx, full_prompt, width, height)
 
-                    img_path = f"scene_{idx}.png"
-                    pil_img.save(img_path, format="PNG")
-                    st.session_state.images.append(img_path)
-                    progress.progress((idx + 1) / len(st.session_state.scenes))
+                img_path = f"scene_{idx}.png"
+                pil_img.save(img_path, format="PNG")
+                st.session_state.images.append(img_path)
+                progress.progress((idx + 1) / len(active_scenes))
 
-                st.success(f"Generated all {len(st.session_state.images)} scene images!")
-            except Exception as exc:
-                st.error(f"Error generating scene images: {exc}")
+            st.success(f"Generated {len(st.session_state.images)} scene-wise images!")
+            for w in warnings_list:
+                st.warning(w)
 
     if st.session_state.images:
         cols = st.columns(2)
