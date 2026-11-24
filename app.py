@@ -1,4 +1,5 @@
 import asyncio
+import base64
 import json
 import os
 import tempfile
@@ -159,7 +160,7 @@ def modify_reference_into_scene(ref_pil, target_w, target_h, scene_idx, art_styl
 
 
 def generate_cloudflare_flux_image(cf_account_id, cf_api_token, prompt_text, target_w, target_h, seed=42):
-    """Call Cloudflare Workers AI FLUX.1 [schnell] REST API."""
+    """Call Cloudflare Workers AI FLUX.1 [schnell] REST API cleanly."""
     url = (
         f"https://api.cloudflare.com/client/v4/accounts/{cf_account_id.strip()}"
         "/ai/run/@cf/black-forest-labs/flux-1-schnell"
@@ -168,15 +169,18 @@ def generate_cloudflare_flux_image(cf_account_id, cf_api_token, prompt_text, tar
         "Authorization": f"Bearer {cf_api_token.strip()}",
         "Content-Type": "application/json",
     }
+
+    snap_w = max(256, min(1024, (int(target_w) // 8) * 8))
+    snap_h = max(256, min(1024, (int(target_h) // 8) * 8))
+
     payload = {
         "prompt": prompt_text,
-        "width": min(target_w, 1024),
-        "height": min(target_h, 1024),
-        "num_steps": 4,
-        "seed": seed,
+        "width": snap_w,
+        "height": snap_h,
     }
     resp = requests.post(url, headers=headers, json=payload, timeout=90)
-    resp.raise_for_status()
+    if not resp.ok:
+        raise RuntimeError(f"HTTP {resp.status_code}: {resp.text[:300]}")
 
     content_type = resp.headers.get("Content-Type", "")
     if "image/" in content_type:
@@ -186,7 +190,6 @@ def generate_cloudflare_flux_image(cf_account_id, cf_api_token, prompt_text, tar
     result = data.get("result", {}) if isinstance(data, dict) else {}
     b64_img = result.get("image")
     if b64_img:
-        import base64
         raw_bytes = base64.b64decode(b64_img)
         return Image.open(BytesIO(raw_bytes)).convert("RGB")
 
