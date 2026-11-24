@@ -3,6 +3,7 @@ import base64
 import json
 import os
 import tempfile
+import textwrap
 import time
 from io import BytesIO
 
@@ -13,7 +14,7 @@ import streamlit as st
 from google import genai
 from google.genai import types
 from huggingface_hub import InferenceClient
-from PIL import Image, ImageEnhance, ImageFilter
+from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageFont
 
 try:
     from moviepy.editor import AudioFileClip, ImageClip, concatenate_videoclips
@@ -62,8 +63,110 @@ def apply_audio(clip, audio):
     return clip.with_audio(audio) if MOVIEPY_V2 else clip.set_audio(audio)
 
 
-def build_motion_clip(img_path, target_w, target_h, duration, motion_mode="Auto Alternate", scene_idx=0):
-    """Create a smooth zoom/pan video segment by sampling frames to JPEGs for reliable MoviePy concatenation."""
+def _find_font(font_size, lang="English"):
+    """Load a suitable TrueType font for English or Kannada if available."""
+    candidates = []
+    if lang == "Kannada":
+        candidates.extend([
+            "/usr/share/fonts/truetype/noto/NotoSansKannada-Regular.ttf",
+            "/usr/share/fonts/truetype/noto/NotoSansKannada-Bold.ttf",
+            "NotoSansKannada-Regular.ttf",
+            "Nirmala.ttf",
+            "nirmala.ttf",
+        ])
+    candidates.extend([
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+        "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
+        "arial.ttf",
+        "DejaVuSans-Bold.ttf",
+    ])
+    for path in candidates:
+        if os.path.exists(path):
+            try:
+                return ImageFont.truetype(path, font_size)
+            except Exception:
+                pass
+    return ImageFont.load_default()
+
+
+def translate_lines_to_kannada(gemini_key, lines):
+    """Translate a list of narration lines into Kannada using Gemini."""
+    if not gemini_key or not gemini_key.strip() or not lines:
+        return lines
+
+    client = genai.Client(api_key=gemini_key.strip())
+    prompt = (
+        "Translate each string in this JSON array into natural, easy-to-read Kannada subtitles. "
+        "Return ONLY a valid JSON array of strings in the exact same order, with no markdown.\n"
+        + json.dumps(lines, ensure_ascii=False)
+    )
+    for model_name in ["gemini-3.5-flash-lite", "gemini-3.1-flash-lite", "gemini-3.6-flash"]:
+        try:
+            resp = client.models.generate_content(model=model_name, contents=prompt)
+            raw = (resp.text or "").strip()
+            if raw.startswith("```"):
+                raw = "\n".join(
+                    line for line in raw.splitlines() if not line.strip().startswith("```")
+                ).strip()
+            parsed = json.loads(raw)
+            if isinstance(parsed, list) and len(parsed) == len(lines):
+                return [str(item).strip() for item in parsed]
+        except Exception:
+            continue
+    return lines
+
+
+def draw_subtitle_on_frame(frame_pil, subtitle_text, target_w, target_h, lang="English"):
+    """Draw a clean subtitle banner near the bottom of a scene frame."""
+    if not subtitle_text or not subtitle_text.strip() or lang == "None":
+        return frame_pil
+
+    img_rgba = frame_pil.convert("RGBA")
+    draw = ImageDraw.Draw(img_rgba)
+
+    font_size = max(22, int(round(target_w * 0.036)))
+    font = _find_font(font_size, lang=lang)
+
+    chars_per_line = max(18, int(target_w / max(10, font_size * 0.58)))
+    wrapped_lines = textwrap.wrap(subtitle_text.strip(), width=chars_per_line)[:3]
+    if not wrapped_lines:
+        return frame_pil
+
+    line_h = font_size + 8
+    box_h = len(wrapped_lines) * line_h + 24
+    pad_x = max(20, int(target_w * 0.04))
+    box_top = max(16, target_h - box_h - max(36, int(target_h * 0.06)))
+    box_bot = min(target_h - 16, box_top + box_h)
+
+    draw.rounded_rectangle(
+        [pad_x, box_top, target_w - pad_x, box_bot],
+        radius=14,
+        fill=(10, 14, 22, 195),
+    )
+
+    cur_y = box_top + 12
+    for line in wrapped_lines:
+        bbox = draw.textbbox((0, 0), line, font=font)
+        text_w = bbox[2] - bbox[0]
+        text_x = max(pad_x + 12, (target_w - text_w) // 2)
+        draw.text((text_x + 2, cur_y + 2), line, font=font, fill=(0, 0, 0, 220))
+        draw.text((text_x, cur_y), line, font=font, fill=(255, 248, 214, 255))
+        cur_y += line_h
+
+    return img_rgba.convert("RGB")
+
+
+def build_motion_clip(
+    img_path,
+    target_w,
+    target_h,
+    duration,
+    motion_mode="Auto Alternate",
+    scene_idx=0,
+    subtitle_text="",
+    subtitle_lang="None",
+):
+    """Create a smooth zoom/pan video segment with optional English or Kannada subtitles."""
     resampling = getattr(Image, "Resampling", Image).LANCZOS
     modes = ["Zoom In", "Pan Right", "Zoom Out", "Pan Left"]
     active_mode = modes[scene_idx % len(modes)] if motion_mode == "Auto Alternate" else motion_mode
@@ -128,8 +231,17 @@ def build_motion_clip(img_path, target_w, target_h, duration, motion_mode="Auto 
         if win_w != target_w or win_h != target_h:
             frame_pil = frame_pil.resize((target_w, target_h), resampling)
 
+        if subtitle_lang != "None" and subtitle_text:
+            frame_pil = draw_subtitle_on_frame(
+                frame_pil,
+                subtitle_text=subtitle_text,
+                target_w=target_w,
+                target_h=target_h,
+                lang=subtitle_lang,
+            )
+
         frame_path = os.path.join("motion_frames", f"s{scene_idx}_f{s_idx}.jpg")
-        frame_pil.save(frame_path, format="JPEG", quality=90)
+        frame_pil.save(frame_path, format="JPEG", quality=92)
         subclips.append(apply_duration(ImageClip(frame_path), step_dur))
 
     return concatenate_videoclips(subclips, method="chain")
@@ -550,6 +662,11 @@ with tab4:
         "Camera Motion",
         ["Auto Alternate", "Zoom In", "Zoom Out", "Pan Right", "Pan Left"],
     )
+    subtitle_lang = st.selectbox(
+        "Subtitles Language",
+        ["None", "English", "Kannada"],
+        index=1,
+    )
 
     if st.button("🎬 Render Final MP4 Video", type="primary"):
         if not st.session_state.images or not st.session_state.audio_files:
@@ -561,7 +678,27 @@ with tab4:
             output_file = "animated_story.mp4"
 
             try:
-                with st.spinner("Applying camera motion, stitching scenes, and exporting MP4..."):
+                with st.spinner("Preparing subtitles, camera motion, and exporting MP4..."):
+                    raw_lines = [
+                        (s.get("narration") or f"Scene {idx + 1}").strip()
+                        for idx, s in enumerate(st.session_state.scenes)
+                    ]
+                    while len(raw_lines) < len(st.session_state.audio_files):
+                        raw_lines.append(f"Scene {len(raw_lines) + 1}")
+
+                    if subtitle_lang == "Kannada":
+                        if api_key and api_key.strip():
+                            sub_lines = translate_lines_to_kannada(api_key, raw_lines)
+                        else:
+                            st.warning(
+                                "Enter a Gemini API Key in the sidebar to auto-translate English narrations into Kannada; using existing narration text as-is."
+                            )
+                            sub_lines = raw_lines
+                    elif subtitle_lang == "English":
+                        sub_lines = raw_lines
+                    else:
+                        sub_lines = [""] * len(st.session_state.audio_files)
+
                     for i, aud_p in enumerate(st.session_state.audio_files):
                         audio_clip = AudioFileClip(aud_p)
                         audio_clips.append(audio_clip)
@@ -574,6 +711,8 @@ with tab4:
                             target_duration,
                             motion_mode=free_motion_style,
                             scene_idx=i,
+                            subtitle_text=sub_lines[i] if i < len(sub_lines) else "",
+                            subtitle_lang=subtitle_lang,
                         )
                         scene_clip = apply_audio(motion_clip, audio_clip)
                         clips.append(scene_clip)
