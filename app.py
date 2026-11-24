@@ -96,7 +96,7 @@ st.markdown(
     .compact-preview-box [data-testid="stImage"] img,
     .compact-preview-box [data-testid="stVideo"] video {
         max-width: 320px !important;
-        max-height: 350px !important;
+        max-height: 340px !important;
         width: auto !important;
         height: auto !important;
         object-fit: contain !important;
@@ -121,8 +121,8 @@ st.markdown(
         .compact-preview-box video,
         .compact-preview-box [data-testid="stImage"] img,
         .compact-preview-box [data-testid="stVideo"] video {
-            max-width: 250px !important;
-            max-height: 270px !important;
+            max-width: 245px !important;
+            max-height: 260px !important;
         }
     }
     </style>
@@ -131,61 +131,61 @@ st.markdown(
 )
 
 DEFAULT_CHAR_PROMPT = (
-    "Expressive main character with clear facial features, natural posture, and consistent outfit "
-    "matching the user's story command and environment"
+    "Ancient Indian mythological hero and divine figures in traditional royal attire, crown, and ornaments; "
+    "epic yuga setting with grand ancient architecture, glowing sun, planets, and sacred sky"
 )
 
 DEFAULT_SCENES = [
     {
-        "narration": "The journey begins as the setting comes alive with every detail you commanded.",
-        "kannada_narration": "ನೀವು ಬಯಸಿದ ಪ್ರತಿಯೊಂದು ವಿವರದೊಂದಿಗೆ ದೃಶ್ಯ ಜೀವಂತವಾಗುತ್ತಾ ಪ್ರಯಾಣ ಆರಂಭವಾಗುತ್ತದೆ.",
-        "emotion": "Focused & Present",
+        "narration": "In the dawn of an ancient yuga, celestial planets and a glowing sun illuminate the sacred realm.",
+        "kannada_narration": "ಪ್ರಾಚೀನ ಯುಗದ ಉದಯದಲ್ಲಿ ಸೂರ್ಯ, ಗ್ರಹಗಳು ಮತ್ತು ದಿವ್ಯ ಬೆಳಕು ಪವಿತ್ರ ಲೋಕವನ್ನು ಬೆಳಗಿಸುತ್ತವೆ.",
+        "emotion": "Sacred & Majestic",
         "motion": "Zoom In",
-        "suggested_broll": "Wide establishing B-roll shot showing environment depth, ambient lighting, and subject entrance",
+        "suggested_broll": "Wide celestial establishing shot with glowing sun, visible planets, and ancient yuga horizon",
         "suggested_fx": "Cinematic Vignette",
         "suggested_sfx": "🌲 Forest Birds",
         "visual": (
-            "Medium cinematic shot matching the exact environment and action requested; "
-            "main character reacting naturally with clear expression and lighting"
+            "Grand ancient yuga vista with glowing sun, planets in the sky, and regal mythological figure "
+            "in traditional crown, jewelry, and dhoti"
         ),
     },
     {
-        "narration": "A sudden turn shifts the mood and tests how the character responds in the moment.",
-        "kannada_narration": "ಹಠಾತ್ ತಿರುವು ವಾತಾವರಣವನ್ನು ಬದಲಾಯಿಸುತ್ತದೆ ಮತ್ತು ಆ ಕ್ಷಣದ ಪ್ರತಿಕ್ರಿಯೆಯನ್ನು ಪರೀಕ್ಷಿಸುತ್ತದೆ.",
-        "emotion": "Alert & Determined",
+        "narration": "A moment of determination rises as the hero stands ready amid shifting cosmic light.",
+        "kannada_narration": "ಬದಲಾಗುವ ದಿವ್ಯ ಬೆಳಕಿನ ನಡುವೆ ವೀರನು ದೃಢ ನಿರ್ಧಾರದೊಂದಿಗೆ ಸಜ್ಜಾಗುತ್ತಾನೆ.",
+        "emotion": "Determination",
         "motion": "Pan Right",
-        "suggested_broll": "Dynamic push-in B-roll cut capturing reaction, subtle hand/body motion, and environmental shift",
+        "suggested_broll": "Medium hero shot with dramatic rim lighting, ancient pillars, and planetary glow",
         "suggested_fx": "Zoom Punch",
         "suggested_sfx": "💥 Vine Boom (Meme)",
         "visual": (
-            "Dynamic medium-wide shot in the requested environment; main character showing "
-            "expressive posture, movement, and atmospheric lighting"
+            "Heroic mythological warrior in royal ornaments and traditional attire standing in an ancient "
+            "courtyard with glowing sun and planets above"
         ),
     },
     {
-        "narration": "Through changing surroundings and emotion, the story builds toward a clear turning point.",
-        "kannada_narration": "ಬದಲಾಗುವ ಪರಿಸರ ಮತ್ತು ಭಾವನೆಗಳ ಮೂಲಕ ಕಥೆಯು ಸ್ಪಷ್ಟ ತಿರುವಿನತ್ತ ಸಾಗುತ್ತದೆ.",
-        "emotion": "Reflective & Resilient",
+        "narration": "Across sacred lands and timeless eras, divine presence guides every unfolding step.",
+        "kannada_narration": "ಪವಿತ್ರ ಭೂಮಿ ಮತ್ತು ಕಾಲಾತೀತ ಯುಗಗಳ ನಡುವೆ ದಿವ್ಯ ಶಕ್ತಿಯು ಪ್ರತಿ ಹೆಜ್ಜೆಯನ್ನು ಮುನ್ನಡೆಸುತ್ತದೆ.",
+        "emotion": "Reflective & Divine",
         "motion": "Zoom Out",
-        "suggested_broll": "Slow pull-back B-roll framing character within broader scenery and atmospheric light",
+        "suggested_broll": "Sweeping pull-back shot showing ancient temple/forest scenery and celestial sky",
         "suggested_fx": "None",
         "suggested_sfx": "🌊 Ocean Waves",
         "visual": (
-            "Expressive framing showing the main character and surrounding environment "
-            "with rich depth, natural motion, and mood lighting"
+            "Ancient yuga landscape with mythological character, sacred architecture, glowing sun, "
+            "and planets across a deep cosmic sky"
         ),
     },
     {
-        "narration": "With steady resolve, the scene settles into a memorable closing moment.",
-        "kannada_narration": "ಸ್ಥಿರ ನಿರ್ಧಾರದೊಂದಿಗೆ ದೃಶ್ಯವು ಒಂದು ಸ್ಮರಣೀಯ ಅಂತ್ಯದತ್ತ ಸಾಗುತ್ತದೆ.",
-        "emotion": "Composed & Hopeful",
+        "narration": "The scene culminates in a radiant vision uniting character, yuga heritage, and the cosmos.",
+        "kannada_narration": "ಪಾತ್ರ, ಯುಗದ ಪರಂಪರೆ ಮತ್ತು ಬ್ರಹ್ಮಾಂಡವನ್ನು ಒಂದುಗೂಡಿಸುವ ತೇಜಸ್ವಿ ದೃಶ್ಯದಲ್ಲಿ ಕಥೆ ಸಾಗುತ್ತದೆ.",
+        "emotion": "Radiant & Triumphant",
         "motion": "Pan Left",
-        "suggested_broll": "Calm closing B-roll shot with warm rim light and composed framing for final beat",
+        "suggested_broll": "Closing cinematic shot with golden rays, planets, and composed hero framing",
         "suggested_fx": "Cinematic Vignette",
         "suggested_sfx": "🔥 Campfire Crackle",
         "visual": (
-            "Balanced cinematic shot of the main character in the commanded setting "
-            "with clear composition and clean lighting"
+            "Cinematic closing shot of ancient mythological character with crown and ornaments against "
+            "yuga scenery, glowing sun, and planets"
         ),
     },
 ]
@@ -251,8 +251,8 @@ for key, default in [
     ("voice_volume", 1.0),
     ("sfx_volume", 0.75),
     ("locked_character_prompt", DEFAULT_CHAR_PROMPT),
-    ("exact_character_count", 1),
-    ("lock_character_enabled", False),
+    ("exact_character_count", 4),
+    ("lock_character_enabled", True),
     ("gen_batch_id", 0),
     ("selected_clip_idx", 0),
     ("format_preset", "9:16 Reels / Shorts"),
@@ -292,6 +292,20 @@ def sync_scene_widget_states(scenes_list):
 
 
 sync_scene_widget_states(st.session_state.scenes)
+
+
+def _ascii_safe(text):
+    """Keep printable ASCII characters so basic bitmap fonts never render missing-glyph boxes."""
+    cleaned = "".join(ch if 32 <= ord(ch) < 127 else " " for ch in (text or ""))
+    return " ".join(cleaned.split())
+
+
+def _extract_visual_command(text):
+    """Clean conversational filler words while keeping concrete subjects, gods, yugas, and planets."""
+    raw = " ".join((text or "").replace("\n", " ").split())
+    for phrase in ("where required", "as commanded", "as requested", "follow the character through"):
+        raw = raw.replace(phrase, " ").replace(phrase.title(), " ")
+    return " ".join(raw.split())
 
 
 def swap_scenes_and_media(idx_a, idx_b):
@@ -714,10 +728,10 @@ def infer_ml_scene_direction(text, idx):
         )
     motions = ["Zoom In", "Pan Right", "Zoom Out", "Pan Left"]
     broll_shots = [
-        "Establishing cinematic B-roll setting the scene and environmental mood",
-        "Medium tracking B-roll following character action and surroundings",
-        "Detail & atmosphere B-roll emphasizing depth and emotion",
-        "Closing narrative B-roll bringing the beat to a clean finish",
+        "Establishing cinematic B-roll with glowing sun, planets, and ancient yuga horizon",
+        "Medium character & B-roll cut showing traditional attire, ornaments, and sacred setting",
+        "Cosmic & environmental B-roll highlighting depth, light rays, and mood",
+        "Closing cinematic B-roll framing characters and ancient backdrop cleanly",
     ]
     return broll_shots[idx % len(broll_shots)], motions[idx % len(motions)], "None", "None"
 
@@ -786,33 +800,35 @@ def ai_suggest_broll_and_fx_for_scenes(gemini_key, scenes):
 
 
 def build_fallback_scenes_from_rough_story(rough_text, count, char_prompt):
-    """Build up to 10 scenes directly from the user's rough story, character, and setting commands."""
+    """Build up to 10 scenes directly from story, character, god, yuga, and celestial elements."""
     target_count = max(1, min(10, int(count)))
-    clean_story = " ".join((rough_text or "").strip().split())
-    clean_char = " ".join((char_prompt or "").strip().split())
+    clean_story = _extract_visual_command(rough_text)
+    clean_char = _extract_visual_command(char_prompt)
     sentences = [
         s.strip()
         for s in clean_story.replace("!", ".").replace("?", ".").split(".")
         if s.strip()
     ]
     beat_moods = [
-        ("Opening & Atmosphere", "establishing the requested environment and mood"),
-        ("Action & Engagement", "character actively interacting with the surroundings"),
-        ("Turning Point & Tension", "shift in mood, lighting, or situation"),
-        ("Movement & Exploration", "dynamic motion through the scene setting"),
-        ("Emotional Reaction", "expressive response to unfolding events"),
-        ("Closer Look & Detail", "focused moment highlighting key action and environment"),
-        ("Rising Momentum", "growing energy and purposeful movement"),
-        ("Reflection & Depth", "quieter, atmospheric moment in the scene"),
-        ("Breakthrough", "clear shift toward resolution or discovery"),
-        ("Closing Frame", "memorable concluding shot matching the story direction"),
+        ("Opening & Celestial Setting", "wide view with glowing sun, planets, and ancient yuga sky"),
+        ("Mythological Presence", "character in traditional attire and ornaments amidst ancient yuga setting"),
+        ("Divine & Cosmic Shift", "dramatic light rays, sun, and planets across ancient sky"),
+        ("Action & Journey", "dynamic movement through ancient yuga landscape and sacred environment"),
+        ("Emotional Intensity", "expressive scene with rich golden lighting and clear character details"),
+        ("Sacred Environment", "detailed ancient architecture, nature, and celestial sky"),
+        ("Rising Drama", "bold framing with glowing sun, planets, and active scene"),
+        ("Quiet Reflection", "serene atmospheric framing in ancient yuga twilight"),
+        ("Turning Point", "striking visual contrast between characters, ancient setting, and planets"),
+        ("Closing Vision", "grand closing shot with characters, ancient yuga backdrop, sun, and planets"),
     ]
     scenes = []
-    subject_prefix = f"{clean_char}; " if clean_char else ""
+    combined_ctx = ", ".join(part for part in [clean_char, clean_story] if part)
     for idx in range(target_count):
-        base_line = sentences[idx % len(sentences)] if sentences else (clean_story or "Custom scene")
+        base_line = sentences[idx % len(sentences)] if sentences else (clean_story or "Ancient yuga scene")
         emo_label, beat_desc = beat_moods[idx % len(beat_moods)]
-        broll_sug, motion_sug, fx_sug, sfx_sug = infer_ml_scene_direction(f"{base_line} {clean_char}", idx)
+        broll_sug, motion_sug, fx_sug, sfx_sug = infer_ml_scene_direction(
+            f"{base_line} {combined_ctx}", idx
+        )
         scenes.append({
             "narration": f"{base_line}.",
             "kannada_narration": "",
@@ -822,8 +838,8 @@ def build_fallback_scenes_from_rough_story(rough_text, count, char_prompt):
             "suggested_fx": fx_sug,
             "suggested_sfx": sfx_sug,
             "visual": (
-                f"Cinematic shot ({beat_desc}) for: {base_line}. "
-                f"{subject_prefix}Follow all user commands for character, background, nature, or location accurately."
+                f"{beat_desc}. Visual elements: {combined_ctx}. "
+                f"Scene focus: {base_line}."
             ).strip(),
         })
     return scenes
@@ -835,7 +851,7 @@ def sync_scenes_to_count(existing_scenes, desired_count, rough_text, char_prompt
     base_story = (
         rough_text.strip()
         if rough_text and rough_text.strip()
-        else "Custom story following user instructions for characters and environment"
+        else "Ancient yuga story with mythological characters, glowing sun, and planets"
     )
     extra_pool = build_fallback_scenes_from_rough_story(base_story, target_n, char_prompt)
 
@@ -1243,28 +1259,21 @@ def build_ducked_bgm_track(bgm_path, total_duration, voice_intervals, normal_vol
 
 
 def build_local_bypass_scene(prompt_text, target_w, target_h, scene_idx, emotion_label=""):
-    """Clean, atmospheric storyboard frame when external AI image APIs fail/quota-out."""
+    """Clean storyboard frame with sun/planet glow and ASCII-safe labels when APIs fail."""
     p_low = (prompt_text or "").lower()
-    if any(k in p_low for k in ["forest", "jungle", "tree", "woods", "nature", "mountain", "valley", "river"]):
+    if any(k in p_low for k in ["sun", "planet", "yuga", "mahabharata", "ramayana", "god", "cosmic", "divine"]):
+        palettes = [
+            ((24, 28, 62), (168, 96, 44), (16, 18, 34)),
+            ((18, 36, 68), (210, 134, 52), (14, 20, 38)),
+            ((38, 22, 58), (186, 86, 64), (18, 14, 30)),
+            ((20, 44, 62), (196, 142, 62), (12, 22, 34)),
+        ]
+    elif any(k in p_low for k in ["forest", "jungle", "tree", "woods", "nature", "mountain", "valley", "river"]):
         palettes = [
             ((18, 48, 38), (44, 96, 68), (12, 28, 22)),
             ((24, 58, 52), (58, 114, 92), (14, 32, 28)),
             ((34, 48, 38), (108, 92, 58), (18, 26, 18)),
             ((16, 42, 56), (46, 98, 94), (10, 24, 32)),
-        ]
-    elif any(k in p_low for k in ["sunset", "sunrise", "golden", "dusk", "dawn", "beach", "ocean", "sea"]):
-        palettes = [
-            ((42, 26, 58), (156, 78, 58), (20, 16, 30)),
-            ((32, 50, 84), (198, 122, 68), (18, 26, 42)),
-            ((26, 38, 66), (136, 74, 84), (14, 20, 32)),
-            ((52, 36, 64), (178, 106, 64), (20, 16, 28)),
-        ]
-    elif any(k in p_low for k in ["night", "space", "stars", "moon", "cyber", "neon"]):
-        palettes = [
-            ((10, 16, 32), (28, 42, 78), (6, 10, 20)),
-            ((18, 12, 36), (58, 32, 88), (10, 8, 20)),
-            ((8, 24, 34), (24, 72, 88), (6, 14, 20)),
-            ((24, 14, 32), (78, 30, 68), (12, 8, 18)),
         ]
     else:
         palettes = [
@@ -1287,16 +1296,27 @@ def build_local_bypass_scene(prompt_text, target_w, target_h, scene_idx, emotion
     sky_wall = c_top * (1.0 - blend_upper) + c_mid * blend_upper
     full_bg = sky_wall * (1.0 - blend_lower) + c_bot * blend_lower
 
-    sun_cx = target_w * (0.28 + 0.14 * (scene_idx % 4))
-    sun_cy = target_h * (0.24 + 0.04 * (scene_idx % 3))
+    sun_cx = target_w * (0.26 + 0.16 * (scene_idx % 4))
+    sun_cy = target_h * (0.22 + 0.04 * (scene_idx % 3))
     dist_sq = (x_grid[:, :, 0] - sun_cx) ** 2 + (y_grid[:, :, 0] - sun_cy) ** 2
-    glow_r = min(target_w, target_h) * 0.24
+    glow_r = min(target_w, target_h) * 0.25
     glow = np.exp(-dist_sq / (2.0 * glow_r ** 2))[:, :, None]
-    full_bg = np.clip(full_bg + glow * np.array([64.0, 52.0, 38.0], dtype=np.float32), 0, 255)
+    full_bg = np.clip(full_bg + glow * np.array([78.0, 58.0, 34.0], dtype=np.float32), 0, 255)
 
     img = Image.fromarray(full_bg.astype(np.uint8), mode="RGB").convert("RGBA")
     overlay = Image.new("RGBA", (target_w, target_h), (0, 0, 0, 0))
     draw = ImageDraw.Draw(overlay)
+
+    # Sun disc + subtle planetary bodies
+    sun_r = max(18, int(min(target_w, target_h) * 0.045))
+    draw.ellipse(
+        [sun_cx - sun_r, sun_cy - sun_r, sun_cx + sun_r, sun_cy + sun_r],
+        fill=(255, 210, 110, 210),
+    )
+    p1_x = int(target_w * 0.78)
+    p1_y = int(target_h * 0.19)
+    p1_r = max(10, int(min(target_w, target_h) * 0.022))
+    draw.ellipse([p1_x - p1_r, p1_y - p1_r, p1_x + p1_r, p1_y + p1_r], fill=(170, 195, 245, 190))
 
     horizon_y = int(target_h * 0.64)
     ridge_pts = [(0, target_h)]
@@ -1313,15 +1333,26 @@ def build_local_bypass_scene(prompt_text, target_w, target_h, scene_idx, emotion
     head_r = max(26, int(min(target_w, target_h) * 0.05))
     head_cy = int(target_h * 0.46) + int(round(math.sin(scene_idx * 1.2) * 8))
 
+    # Crown / ornament crest
+    draw.polygon(
+        [
+            (cx - int(head_r * 0.85), head_cy - int(head_r * 0.75)),
+            (cx - int(head_r * 0.45), head_cy - int(head_r * 1.35)),
+            (cx, head_cy - int(head_r * 0.95)),
+            (cx + int(head_r * 0.45), head_cy - int(head_r * 1.35)),
+            (cx + int(head_r * 0.85), head_cy - int(head_r * 0.75)),
+        ],
+        fill=(245, 195, 75, 240),
+    )
+
     draw.rounded_rectangle(
         [cx - int(head_r * 1.9), head_cy + head_r + 6, cx + int(head_r * 1.9), head_cy + head_r + int(head_r * 3.2)],
         radius=28,
         fill=(28, 36, 52, 230),
-        outline=(235, 195, 115, 120),
+        outline=(235, 195, 115, 140),
         width=2,
     )
     draw.ellipse([cx - head_r, head_cy - head_r, cx + head_r, head_cy + head_r], fill=(214, 170, 140, 250))
-    draw.pieslice([cx - head_r, head_cy - head_r - 2, cx + head_r, head_cy + head_r - 6], 185, 355, fill=(36, 28, 24, 255))
 
     eye_y = head_cy - 2
     eye_dx = max(9, int(head_r * 0.35))
@@ -1343,7 +1374,7 @@ def build_local_bypass_scene(prompt_text, target_w, target_h, scene_idx, emotion
 
     title_font, _ = _find_font(max(18, int(target_w * 0.025)), lang="English")
     body_font, _ = _find_font(max(16, int(target_w * 0.021)), lang="English")
-    emo_badge = f" • {emotion_label.upper()}" if emotion_label else ""
+    emo_badge = f" • {_ascii_safe(emotion_label).upper()}" if _ascii_safe(emotion_label) else ""
     draw.text(
         (cx0 + 18, cy0 + 12),
         f"SCENE {scene_idx + 1}{emo_badge}",
@@ -1351,7 +1382,7 @@ def build_local_bypass_scene(prompt_text, target_w, target_h, scene_idx, emotion
         fill=(255, 118, 154, 255),
     )
 
-    clean_action = " ".join((prompt_text or "").split())
+    clean_action = _ascii_safe(prompt_text)
     wrapped = textwrap.wrap(clean_action, width=max(26, int(card_w / max(10, int(target_w * 0.021) * 0.56))))[:3]
     cur_y = cy0 + 44
     for line in wrapped:
@@ -1393,7 +1424,7 @@ def generate_cloudflare_flux_image(cf_account_id, cf_api_token, prompt_text, tar
         if target_h > target_w
         else "horizontal 16:9 landscape composition"
     )
-    bounded_prompt = f"{prompt_text.strip()}, {aspect_hint}"[:2048]
+    bounded_prompt = f"{_extract_visual_command(prompt_text)}, {aspect_hint}"[:2048]
     payload = {"prompt": bounded_prompt}
     resp = requests.post(url, headers=headers, json=payload, timeout=90)
     if not resp.ok:
@@ -1419,7 +1450,7 @@ def generate_pollinations_image(prompt_text, target_w, target_h, seed=42):
     """Fallback AI image generator via Pollinations.ai when primary quotas are reached."""
     w_p = max(256, min(1024, (target_w // 8) * 8))
     h_p = max(256, min(1024, (target_h // 8) * 8))
-    short_prompt = prompt_text[:320]
+    short_prompt = _extract_visual_command(prompt_text)[:280]
     encoded_prompt = urllib.parse.quote(short_prompt, safe="")
     endpoints = [
         f"https://gen.pollinations.ai/image/{encoded_prompt}?model=flux&width={w_p}&height={h_p}&seed={seed}",
@@ -1428,7 +1459,7 @@ def generate_pollinations_image(prompt_text, target_w, target_h, seed=42):
     last_err = None
     for url in endpoints:
         try:
-            resp = requests.get(url, timeout=60)
+            resp = requests.get(url, timeout=45)
             if resp.ok and "image/" in resp.headers.get("Content-Type", ""):
                 img = Image.open(BytesIO(resp.content)).convert("RGB")
                 return ensure_exact_size(img, target_w, target_h, bg_mode="Crop Fill")
@@ -1479,7 +1510,7 @@ def generate_real_ai_scene(
         ]:
             try:
                 img = client.text_to_image(
-                    prompt=prompt_text,
+                    prompt=_extract_visual_command(prompt_text),
                     model=model_id,
                     width=w_hf,
                     height=h_hf,
@@ -1493,7 +1524,8 @@ def generate_real_ai_scene(
         if not gemini_key.strip():
             raise RuntimeError("Missing Gemini API Key.")
         client = genai.Client(api_key=gemini_key.strip())
-        contents = [ref_pil.convert("RGB"), prompt_text] if ref_pil is not None else prompt_text
+        clean_p = _extract_visual_command(prompt_text)
+        contents = [ref_pil.convert("RGB"), clean_p] if ref_pil is not None else clean_p
         last_gem_err = None
         for model_id in ["gemini-3.1-flash-lite-image", "gemini-3.1-flash-image"]:
             try:
@@ -1609,7 +1641,7 @@ def apply_clip_transition(clips, transition_name="Crossfade", trans_sec=0.5):
 def export_project_json():
     """Serialize studio state into a portable JSON project payload."""
     payload = {
-        "version": "2.1-pro",
+        "version": "2.2-pro",
         "format_preset": st.session_state.format_preset,
         "bg_fit_mode": st.session_state.bg_fit_mode,
         "playback_speed": st.session_state.playback_speed,
@@ -1706,7 +1738,7 @@ st.markdown(
             <span class="studio-pill">AI STUDIO PRO</span>
             <span style="font-weight:700;font-size:17px;">Movie, Shorts & Reels Creation Suite</span>
         </div>
-        <div class="studio-sub">Laptop & Mobile Friendly • AI B-Roll & FX • Trim, Split & Reorder • Voice Ducking & Project Save</div>
+        <div class="studio-sub">Laptop & Mobile Friendly • All Scenes Rendered • Trim, Split & Reorder • Voice Ducking</div>
     </div>
     """,
     unsafe_allow_html=True,
@@ -1753,7 +1785,7 @@ with st.sidebar:
     st.session_state.locked_character_prompt = st.text_area(
         "Character / Background / Nature Command",
         value=st.session_state.locked_character_prompt,
-        height=95,
+        height=105,
     )
 
     st.divider()
@@ -1826,7 +1858,7 @@ with st.expander("🖥️ Compact Preview Stage, Studio Controls & Clip Trim/Spl
             st.image(
                 prev_img,
                 caption=f"Scene {c_idx + 1} • {width}x{height} • {scene_fx_choice}",
-                width=280,
+                width=270,
             )
         elif monitor_mode == "Rendered Clip" and avail_vids:
             v_idx = min(int(st.session_state.selected_clip_idx), len(avail_vids) - 1)
@@ -1860,7 +1892,7 @@ with st.expander("🖥️ Compact Preview Stage, Studio Controls & Clip Trim/Spl
             st.image(
                 fallback_img,
                 caption=f"Preview ({width}x{height})",
-                width=280,
+                width=270,
             )
         st.markdown("</div>", unsafe_allow_html=True)
 
@@ -2060,7 +2092,7 @@ with st.expander("🖥️ Compact Preview Stage, Studio Controls & Clip Trim/Spl
             st.session_state.custom_title_text = st.text_input(
                 "Hook / Title Overlay Text",
                 value=st.session_state.custom_title_text,
-                placeholder="Example: Watch till the end! / ಅಚ್ಚರಿಯ ತಿರುವು!",
+                placeholder="Example: Ancient Yuga Chronicle!",
                 key="title_overlay_input",
             )
             st.session_state.custom_title_lang = st.selectbox(
@@ -2135,10 +2167,10 @@ with tab1:
     st.markdown("### Write Your Command, Story, Nature Setting, or Reel Concept")
     rough_story = st.text_area(
         "Story / Reel / Movie Command:",
-        value="Follow the character through any setting, nature, or situation described in my command with clear emotion and action.",
+        value="Mahabharata, Ramayana, and ancient yugas with mythological heroes, gods, glowing sun, and planets across sacred landscapes.",
         height=105,
     )
-    num_scenes = st.slider("Number of Scenes", 2, 10, max(2, min(10, len(st.session_state.scenes) or 6)))
+    num_scenes = st.slider("Number of Scenes", 2, 10, max(2, min(10, len(st.session_state.scenes) or 4)))
 
     t1_b1, t1_b2, t1_b3 = st.columns(3)
     with t1_b1:
@@ -2177,7 +2209,7 @@ with tab1:
                 else f"\nCharacter/environment notes: {st.session_state.locked_character_prompt}"
             )
             prompt = f"""
-            Create a {num_scenes}-scene story script obeying every user command for characters, nature, backgrounds, locations, and actions.{char_context}
+            Create a {num_scenes}-scene story script obeying every user command for characters, gods, yugas, sun, planets, and backgrounds.{char_context}
             Return ONLY valid JSON as a list of {num_scenes} objects, no markdown.
             Each object must have:
             - "narration": clear English voiceover (1-2 sentences)
@@ -2186,7 +2218,7 @@ with tab1:
             - "motion": one of ["Auto Alternate", "Zoom In", "Zoom Out", "Pan Right", "Pan Left"]
             - "suggested_broll": 1-line B-roll shot suggestion
             - "suggested_fx": one of ["None", "Zoom Punch", "Shake", "Flash White", "Glitch RGB", "Vintage Sepia", "Cinematic Vignette"]
-            - "visual": scene visual description honoring user commands for character, setting/nature/background, and action
+            - "visual": concrete visual scene description with character details, yuga/background, sun, and planets
             User command: {rough_story.strip()}
             """
             client = genai.Client(api_key=api_key.strip())
@@ -2360,11 +2392,11 @@ with tab2:
 
     opt1, opt2, opt3 = st.columns(3)
     with opt1:
-        scene_count_slider = st.slider("Scene Count", 2, 10, max(2, min(10, len(st.session_state.scenes) or 6)))
+        scene_count_slider = st.slider("Scene Count", 2, 10, max(2, min(10, len(st.session_state.scenes) or 4)))
     with opt2:
         per_scene_sec = st.slider("Base Clip Duration (sec)", 2.0, 10.0, 4.0, 0.5)
     with opt3:
-        tab2_sub_lang = st.selectbox("Subtitles in Scene Clips", ["None", "English", "Kannada"], index=2)
+        tab2_sub_lang = st.selectbox("Subtitles in Scene Clips", ["None", "English", "Kannada"], index=0)
 
     ref_file = st.file_uploader("Optional Reference Image (Character or Scene)", type=["png", "jpg", "jpeg", "webp"])
     allow_local_bypass = st.checkbox("Use local storyboard frames automatically if external image APIs fail/hit quota", value=True)
@@ -2402,22 +2434,23 @@ with tab2:
         st.session_state.scene_videos = []
         os.makedirs("scene_videos", exist_ok=True)
 
+        char_cmd = _extract_visual_command(st.session_state.locked_character_prompt)
         cast_guard = (
-            f"Follow user command strictly: {st.session_state.locked_character_prompt} "
-            f"({int(st.session_state.exact_character_count)} main subject(s) when applicable)."
+            f"Subjects and setting: {char_cmd} ({int(st.session_state.exact_character_count)} main characters)."
             if st.session_state.lock_character_enabled
-            else st.session_state.locked_character_prompt
+            else char_cmd
         )
 
         prog = st.progress(0)
         for idx, scene in enumerate(active_scenes):
-            broll_note = scene.get("suggested_broll", "")
+            broll_note = _extract_visual_command(scene.get("suggested_broll", ""))
+            vis_note = _extract_visual_command(scene.get("visual", ""))
             full_prompt = (
                 f"{art_style}. {cast_guard} "
                 f"Scene {idx + 1} mood: {scene.get('emotion', 'Expressive')}. "
-                f"Scene {idx + 1} command: {scene.get('visual', '')}. "
-                f"B-roll direction: {broll_note}. "
-                f"Story: {rough_story.strip()}"
+                f"Scene visual: {vis_note}. "
+                f"B-roll: {broll_note}. "
+                f"Context: {_extract_visual_command(rough_story)}"
             ).strip()
 
             pil_img, _, _ = generate_real_ai_scene(
@@ -2436,37 +2469,44 @@ with tab2:
                 emotion_label=scene.get("emotion", "Expressive"),
                 seed_offset=batch_id * 100,
             )
-            if pil_img is not None:
-                img_path = f"scene_{idx}_b{batch_id}.png"
-                ensure_exact_size(pil_img, width, height, bg_mode=st.session_state.bg_fit_mode).save(img_path, format="PNG")
-                st.session_state.images.append(img_path)
 
-                sc_fx = st.session_state.scene_fx_overrides.get(idx, st.session_state.editor_video_fx)
-                vid_path = os.path.join("scene_videos", f"scene_{idx}_b{batch_id}.mp4")
-                render_single_scene_video(
-                    img_path=img_path,
-                    out_path=vid_path,
-                    target_w=width,
-                    target_h=height,
-                    duration=per_scene_sec,
-                    motion_mode=scene.get("motion", "Auto Alternate"),
-                    scene_idx=idx,
-                    subtitle_text=scene_subtitles[idx] if idx < len(scene_subtitles) else "",
-                    subtitle_lang=tab2_sub_lang,
-                    subtitle_pos=st.session_state.subtitle_position,
-                    subtitle_scale=st.session_state.subtitle_scale,
-                    enable_char_motion=True,
-                    brightness=st.session_state.editor_brightness,
-                    contrast=st.session_state.editor_contrast,
-                    saturation=st.session_state.editor_saturation,
-                    blur_radius=st.session_state.editor_blur,
-                    video_fx=sc_fx,
-                    bg_mode=st.session_state.bg_fit_mode,
+            if pil_img is None:
+                pil_img = build_local_bypass_scene(
+                    full_prompt, width, height, idx, emotion_label=scene.get("emotion", "Scene")
                 )
-                st.session_state.scene_videos.append(vid_path)
-            prog.progress((idx + 1) / len(active_scenes))
 
-        st.success(f"Generated {len(st.session_state.scene_videos)} scene videos at {width}x{height}.")
+            img_path = f"scene_{idx}_b{batch_id}.png"
+            ensure_exact_size(pil_img, width, height, bg_mode=st.session_state.bg_fit_mode).save(img_path, format="PNG")
+            st.session_state.images.append(img_path)
+
+            sc_fx = st.session_state.scene_fx_overrides.get(idx, st.session_state.editor_video_fx)
+            vid_path = os.path.join("scene_videos", f"scene_{idx}_b{batch_id}.mp4")
+            render_single_scene_video(
+                img_path=img_path,
+                out_path=vid_path,
+                target_w=width,
+                target_h=height,
+                duration=per_scene_sec,
+                motion_mode=scene.get("motion", "Auto Alternate"),
+                scene_idx=idx,
+                subtitle_text=scene_subtitles[idx] if idx < len(scene_subtitles) else "",
+                subtitle_lang=tab2_sub_lang,
+                subtitle_pos=st.session_state.subtitle_position,
+                subtitle_scale=st.session_state.subtitle_scale,
+                enable_char_motion=True,
+                brightness=st.session_state.editor_brightness,
+                contrast=st.session_state.editor_contrast,
+                saturation=st.session_state.editor_saturation,
+                blur_radius=st.session_state.editor_blur,
+                video_fx=sc_fx,
+                bg_mode=st.session_state.bg_fit_mode,
+            )
+            st.session_state.scene_videos.append(vid_path)
+            prog.progress((idx + 1) / len(active_scenes))
+            if idx < len(active_scenes) - 1:
+                time.sleep(0.8)
+
+        st.success(f"Generated all {len(st.session_state.scene_videos)} scene videos at {width}x{height}.")
 
     if st.session_state.scene_videos:
         grid_cols = st.columns(2)
@@ -2558,7 +2598,7 @@ with tab4:
     st.markdown("### Export Final Video (Movie, Shorts or Reels)")
     exp1, exp2 = st.columns(2)
     with exp1:
-        final_sub_lang = st.selectbox("Final Subtitles", ["None", "English", "Kannada"], index=2, key="final_sub_box")
+        final_sub_lang = st.selectbox("Final Subtitles", ["None", "English", "Kannada"], index=0, key="final_sub_box")
     with exp2:
         final_motion_mode = st.selectbox(
             "Fallback Motion Mode",
