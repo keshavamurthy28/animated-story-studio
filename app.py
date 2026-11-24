@@ -34,7 +34,12 @@ for key, default in [
     ("scenes", []),
     ("images", []),
     ("audio_files", []),
-    ("locked_character_prompt", "Four teenage boys (12-15 years old, one chubby boy, one lean boy, two slim boys) wearing simple casual clothes, and a large brown forest bear"),
+    ("custom_audio_paths", []),
+    ("own_voice_table", {}),
+    (
+        "locked_character_prompt",
+        "Four teenage boys (12-15 years old, one chubby boy, one lean boy, two slim boys) wearing simple casual clothes, and a large brown forest bear",
+    ),
     ("lock_character_enabled", True),
     ("kannada_subtitles", {}),
 ]:
@@ -89,7 +94,7 @@ def _find_font(font_size, lang="English"):
         tmp_font = "/tmp/NotoSansKannada-Regular.ttf"
         font_urls = [
             "https://github.com/google/fonts/raw/main/ofl/notosanskannada/static/NotoSansKannada-Regular.ttf",
-            "https://raw.githubusercontent.com/google/fonts/main/ofl/notosanskannada/NotoSansKannada%5Bwght%5D.ttf",
+            "https://github.com/google/fonts/raw/main/ofl/notosanskannada/NotoSansKannada%5Bwght%5D.ttf",
             "https://raw.githubusercontent.com/notofonts/kannada/main/hinted/ttf/NotoSansKannada-Regular.ttf",
         ]
         for url in font_urls:
@@ -151,7 +156,6 @@ def compute_audio_envelope(audio_path, num_steps):
     try:
         clip = AudioFileClip(audio_path)
         try:
-            dur = max(float(clip.duration or 1.0), 0.2)
             samples = clip.to_soundarray(fps=4000)
             if samples is None or len(samples) == 0:
                 raise ValueError("Empty audio samples")
@@ -188,7 +192,6 @@ def draw_lipsync_indicator(frame_pil, speech_energy, target_w, target_h, enable_
     cx = target_w // 2
     cy = int(round(target_h * 0.74))
 
-    # Subtle lower-third speech/lip-sync cue badge
     badge_w = mouth_w + 26
     badge_h = max(26, mouth_open + 16)
     draw.rounded_rectangle(
@@ -291,7 +294,6 @@ def build_motion_clip(
         progress = s_idx / max(1, num_steps - 1)
         ease = progress * progress * (3.0 - 2.0 * progress)
 
-        # Character breathing & micro-sway offset
         char_sway_x = int(round(math.sin(s_idx * 1.1 + scene_idx) * 8)) if enable_char_motion else 0
         char_bob_y = int(round(abs(math.cos(s_idx * 1.4 + scene_idx)) * 7)) if enable_char_motion else 0
 
@@ -878,6 +880,99 @@ with tab3:
         if st.session_state.audio_files:
             st.audio(st.session_state.audio_files[0])
 
+    # --- SEPARATE TABLE FOR MY OWN VOICE RECORDING & SAVING ---
+    st.divider()
+    st.markdown("### 📋 My Own Voice — Separate Script & Recording Table")
+    st.caption(
+        "Read each scene's script line below, record with your microphone (or upload a clip per row), preview it, and click Save My Voice Table."
+    )
+
+    table_scenes = (
+        st.session_state.scenes
+        if st.session_state.scenes
+        else [
+            {"narration": f"Scene {i + 1} script line to read aloud.", "visual": ""}
+            for i in range(max(len(st.session_state.images), 4))
+        ]
+    )
+
+    os.makedirs("own_voice_table", exist_ok=True)
+    draft_rows = []
+
+    for idx, sc in enumerate(table_scenes):
+        line_to_read = (sc.get("narration") or f"Scene {idx + 1}.").strip()
+        kn_hint = st.session_state.kannada_subtitles.get(idx, "").strip()
+
+        row_c1, row_c2, row_c3, row_c4 = st.columns([0.9, 2.4, 2.1, 1.6])
+        with row_c1:
+            st.markdown(f"**Scene {idx + 1}**")
+            existing_path = st.session_state.own_voice_table.get(idx, "")
+            st.caption("✅ Saved" if existing_path and os.path.exists(existing_path) else "⏳ Pending")
+
+        with row_c2:
+            st.markdown("**Read This Script:**")
+            st.write(line_to_read)
+            if kn_hint:
+                st.caption(f"ಕನ್ನಡ: {kn_hint}")
+
+        with row_c3:
+            mic_val = None
+            if hasattr(st, "audio_input"):
+                mic_val = st.audio_input(f"Record Scene {idx + 1}", key=f"mic_scene_{idx}")
+            up_row_val = st.file_uploader(
+                f"Or upload Scene {idx + 1} audio",
+                type=["mp3", "wav", "m4a", "ogg"],
+                key=f"up_scene_{idx}",
+            )
+
+        with row_c4:
+            saved_p = st.session_state.own_voice_table.get(idx, "")
+            if mic_val is not None:
+                st.audio(mic_val)
+            elif up_row_val is not None:
+                st.audio(up_row_val)
+            elif saved_p and os.path.exists(saved_p):
+                st.audio(saved_p)
+            else:
+                st.caption("No audio yet")
+
+        draft_rows.append((idx, line_to_read, mic_val, up_row_val))
+
+    if st.button("💾 Save My Voice Table", type="primary"):
+        saved_audio_list = []
+        missing_rows = []
+
+        for idx, _, mic_val, up_row_val in draft_rows:
+            out_path = os.path.join("own_voice_table", f"scene_{idx}_own_voice.wav")
+            if mic_val is not None:
+                with open(out_path, "wb") as f:
+                    f.write(mic_val.getvalue())
+                st.session_state.own_voice_table[idx] = out_path
+                saved_audio_list.append(out_path)
+            elif up_row_val is not None:
+                ext = os.path.splitext(up_row_val.name)[1].lower() or ".mp3"
+                alt_path = os.path.join("own_voice_table", f"scene_{idx}_own_voice{ext}")
+                with open(alt_path, "wb") as f:
+                    f.write(up_row_val.getbuffer())
+                st.session_state.own_voice_table[idx] = alt_path
+                saved_audio_list.append(alt_path)
+            elif st.session_state.own_voice_table.get(idx) and os.path.exists(
+                st.session_state.own_voice_table[idx]
+            ):
+                saved_audio_list.append(st.session_state.own_voice_table[idx])
+            else:
+                missing_rows.append(idx + 1)
+
+        if saved_audio_list:
+            st.session_state.audio_files = saved_audio_list
+            st.success(
+                f"Saved {len(saved_audio_list)} voice track(s) from your table! Ready for Tab 4 rendering."
+            )
+            if missing_rows:
+                st.warning(f"No recording saved yet for Scene(s): {', '.join(map(str, missing_rows))}.")
+        else:
+            st.error("Please record or upload at least one scene voice clip in the table before saving.")
+
 # --- TAB 4: RENDER & DOWNLOAD ---
 with tab4:
     st.subheader("Character Animation, Lip-Sync, Subtitles & MP4 Export")
@@ -904,7 +999,7 @@ with tab4:
 
     if st.button("🎬 Render Final MP4 Video", type="primary"):
         if not st.session_state.images or not st.session_state.audio_files:
-            st.error("Make sure both Scene Artwork (Tab 2) and Narration (Tab 3) are generated.")
+            st.error("Make sure both Scene Artwork (Tab 2) and Narration (Tab 3) are generated or saved.")
         else:
             clips = []
             audio_clips = []
@@ -912,7 +1007,9 @@ with tab4:
             output_file = "animated_story.mp4"
 
             try:
-                with st.spinner("Animating characters, syncing speech cadence, rendering subtitles, and exporting MP4..."):
+                with st.spinner(
+                    "Animating characters, syncing speech cadence, rendering subtitles, and exporting MP4..."
+                ):
                     raw_lines = [
                         (s.get("narration") or f"Scene {idx + 1}").strip()
                         for idx, s in enumerate(st.session_state.scenes)
