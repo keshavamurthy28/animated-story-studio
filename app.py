@@ -1,5 +1,6 @@
 import asyncio
 import base64
+import copy
 import json
 import math
 import os
@@ -209,11 +210,11 @@ PRESET_AUDIO_EFFECTS = {
 
 MOOD_FILTERS = {
     "Original": {"b": 1.0, "c": 1.0, "s": 1.0, "fx": "None"},
-    "Vivid Reels": {"b": 1.06, "c": 1.18, "s": 1.42, "fx": "None"},
-    "Warm Golden": {"b": 1.06, "c": 1.08, "s": 1.22, "fx": "None"},
-    "Cinema Moody": {"b": 0.96, "c": 1.18, "s": 0.85, "fx": "Cinematic Vignette"},
-    "Vintage Film": {"b": 1.02, "c": 1.10, "s": 0.72, "fx": "Vintage Sepia"},
-    "Comedy Punch": {"b": 1.08, "c": 1.22, "s": 1.32, "fx": "Zoom Punch"},
+    "Vivid Reels": {"b": 1.04, "c": 1.12, "s": 1.24, "fx": "None"},
+    "Warm Golden": {"b": 1.05, "c": 1.06, "s": 1.15, "fx": "None"},
+    "Cinema Moody": {"b": 0.97, "c": 1.14, "s": 0.88, "fx": "Cinematic Vignette"},
+    "Vintage Film": {"b": 1.01, "c": 1.08, "s": 0.76, "fx": "Vintage Sepia"},
+    "Comedy Punch": {"b": 1.05, "c": 1.15, "s": 1.20, "fx": "Zoom Punch"},
 }
 
 FORMAT_PRESETS = {
@@ -236,6 +237,7 @@ VIDEO_FX_CHOICES = [
 
 MOTION_CHOICES = ["Auto Alternate", "Zoom In", "Zoom Out", "Pan Right", "Pan Left"]
 SUBTITLE_POSITIONS = ["Bottom", "Center", "Top"]
+MAX_HISTORY_STEPS = 3
 
 for key, default in [
     ("scenes", [dict(s) for s in DEFAULT_SCENES]),
@@ -244,7 +246,7 @@ for key, default in [
     ("uploaded_photo_paths", []),
     ("uploaded_video_clips", []),
     ("uploaded_audio_clips", []),
-    ("arrangement_command", "Hero spotlight frame with glowing golden border, dynamic zoom, and bold reel wordings"),
+    ("arrangement_command", "Clean hero framing with natural sharpness and optional reel wordings"),
     ("reel_wordings_input", ""),
     ("audio_files", []),
     ("bgm_audio_path", ""),
@@ -264,16 +266,19 @@ for key, default in [
     ("custom_title_text", ""),
     ("custom_title_lang", "English"),
     ("subtitle_position", "Bottom"),
-    ("subtitle_scale", 1.0),
-    ("editor_brightness", 1.05),
-    ("editor_contrast", 1.12),
-    ("editor_saturation", 1.24),
+    ("subtitle_scale", 0.85),
+    ("editor_brightness", 1.0),
+    ("editor_contrast", 1.04),
+    ("editor_saturation", 1.06),
     ("editor_blur", 0.0),
     ("editor_transition", "Crossfade"),
     ("editor_transition_sec", 0.5),
     ("editor_video_fx", "None"),
     ("scene_audio_fx", {}),
     ("scene_fx_overrides", {}),
+    ("undo_stack", []),
+    ("redo_stack", []),
+    ("last_history_label", ""),
 ]:
     if key not in st.session_state:
         st.session_state[key] = default
@@ -297,6 +302,116 @@ def sync_scene_widget_states(scenes_list):
 sync_scene_widget_states(st.session_state.scenes)
 
 
+def _capture_snapshot(action_label="Edit"):
+    """Build a serializable snapshot of editable studio state for 3-step undo/redo."""
+    return {
+        "label": action_label,
+        "scenes": copy.deepcopy(st.session_state.scenes),
+        "images": list(st.session_state.images),
+        "scene_videos": list(st.session_state.scene_videos),
+        "uploaded_photo_paths": list(st.session_state.uploaded_photo_paths),
+        "uploaded_video_clips": list(st.session_state.uploaded_video_clips),
+        "arrangement_command": str(st.session_state.arrangement_command),
+        "reel_wordings_input": str(st.session_state.reel_wordings_input),
+        "audio_files": list(st.session_state.audio_files),
+        "bgm_audio_path": str(st.session_state.bgm_audio_path),
+        "bgm_volume": float(st.session_state.bgm_volume),
+        "bgm_duck_enabled": bool(st.session_state.bgm_duck_enabled),
+        "bgm_duck_volume": float(st.session_state.bgm_duck_volume),
+        "voice_volume": float(st.session_state.voice_volume),
+        "sfx_volume": float(st.session_state.sfx_volume),
+        "locked_character_prompt": str(st.session_state.locked_character_prompt),
+        "exact_character_count": int(st.session_state.exact_character_count),
+        "lock_character_enabled": bool(st.session_state.lock_character_enabled),
+        "selected_clip_idx": int(st.session_state.selected_clip_idx),
+        "format_preset": str(st.session_state.format_preset),
+        "bg_fit_mode": str(st.session_state.bg_fit_mode),
+        "playback_speed": float(st.session_state.playback_speed),
+        "custom_title_text": str(st.session_state.custom_title_text),
+        "custom_title_lang": str(st.session_state.custom_title_lang),
+        "subtitle_position": str(st.session_state.subtitle_position),
+        "subtitle_scale": float(st.session_state.subtitle_scale),
+        "editor_brightness": float(st.session_state.editor_brightness),
+        "editor_contrast": float(st.session_state.editor_contrast),
+        "editor_saturation": float(st.session_state.editor_saturation),
+        "editor_blur": float(st.session_state.editor_blur),
+        "editor_transition": str(st.session_state.editor_transition),
+        "editor_transition_sec": float(st.session_state.editor_transition_sec),
+        "editor_video_fx": str(st.session_state.editor_video_fx),
+        "scene_audio_fx": copy.deepcopy(st.session_state.scene_audio_fx),
+        "scene_fx_overrides": copy.deepcopy(st.session_state.scene_fx_overrides),
+    }
+
+
+def _apply_snapshot(snap):
+    """Restore a snapshot into st.session_state and sync widget keys."""
+    for k, v in snap.items():
+        if k == "label":
+            continue
+        st.session_state[k] = copy.deepcopy(v)
+    sync_scene_widget_states(st.session_state.scenes)
+
+
+def record_undo_step(action_label="Edit"):
+    """Push current state onto the 3-step undo stack and clear redo history on new changes."""
+    snap = _capture_snapshot(action_label=action_label)
+    u_stack = list(st.session_state.undo_stack)
+    if u_stack and u_stack[-1].get("scenes") == snap["scenes"] and (
+        u_stack[-1].get("editor_brightness") == snap["editor_brightness"]
+        and u_stack[-1].get("editor_contrast") == snap["editor_contrast"]
+        and u_stack[-1].get("editor_saturation") == snap["editor_saturation"]
+        and u_stack[-1].get("editor_blur") == snap["editor_blur"]
+        and u_stack[-1].get("editor_video_fx") == snap["editor_video_fx"]
+        and u_stack[-1].get("editor_transition") == snap["editor_transition"]
+        and u_stack[-1].get("scene_videos") == snap["scene_videos"]
+        and u_stack[-1].get("custom_title_text") == snap["custom_title_text"]
+        and u_stack[-1].get("arrangement_command") == snap["arrangement_command"]
+    ):
+        return
+    u_stack.append(snap)
+    if len(u_stack) > MAX_HISTORY_STEPS:
+        u_stack = u_stack[-MAX_HISTORY_STEPS:]
+    st.session_state.undo_stack = u_stack
+    st.session_state.redo_stack = []
+    st.session_state.last_history_label = action_label
+
+
+def perform_undo():
+    """Undo up to 3 previous steps and move undone state onto the 3-step redo stack."""
+    u_stack = list(st.session_state.undo_stack)
+    if not u_stack:
+        return False
+    r_stack = list(st.session_state.redo_stack)
+    r_stack.append(_capture_snapshot(action_label=st.session_state.last_history_label or "Redo Step"))
+    if len(r_stack) > MAX_HISTORY_STEPS:
+        r_stack = r_stack[-MAX_HISTORY_STEPS:]
+
+    target_snap = u_stack.pop()
+    st.session_state.undo_stack = u_stack
+    st.session_state.redo_stack = r_stack
+    st.session_state.last_history_label = f"Undid: {target_snap.get('label', 'Change')}"
+    _apply_snapshot(target_snap)
+    return True
+
+
+def perform_redo():
+    """Redo up to 3 undone steps."""
+    r_stack = list(st.session_state.redo_stack)
+    if not r_stack:
+        return False
+    u_stack = list(st.session_state.undo_stack)
+    u_stack.append(_capture_snapshot(action_label="Undo Step"))
+    if len(u_stack) > MAX_HISTORY_STEPS:
+        u_stack = u_stack[-MAX_HISTORY_STEPS:]
+
+    target_snap = r_stack.pop()
+    st.session_state.redo_stack = r_stack
+    st.session_state.undo_stack = u_stack
+    st.session_state.last_history_label = f"Redid: {target_snap.get('label', 'Change')}"
+    _apply_snapshot(target_snap)
+    return True
+
+
 def _ascii_safe(text):
     """Keep printable ASCII characters so basic bitmap fonts never render missing-glyph boxes."""
     cleaned = "".join(ch if 32 <= ord(ch) < 127 else " " for ch in (text or ""))
@@ -312,7 +427,7 @@ def _extract_visual_command(text):
 
 
 def parse_arrangement_directives(arrangement_text):
-    """Translate user arrangement wording ('how it should be arranged so that it pops') into layout/motion/pop rules."""
+    """Translate user arrangement wording into layout/motion/pop rules."""
     low = (arrangement_text or "").lower()
     layout_mode = "Spotlight Card"
     if any(k in low for k in ["collage", "grid", "split", "multi", "side by side", "montage"]):
@@ -344,10 +459,10 @@ def compose_user_photos_into_frame(
     scene_idx=0,
     arrangement_cmd="",
     caption_text="",
-    caption_lang="English",
+    caption_lang="None",
     bg_mode="Blur Canvas",
 ):
-    """Arrange one or more user-uploaded photos into a crisp, high-pop composition with optional wordings."""
+    """Compose user photos cleanly without heavy borders or harsh color washes."""
     resampling = getattr(Image, "Resampling", Image).LANCZOS
     valid_paths = [p for p in (photo_paths or []) if p and os.path.exists(p)]
     if not valid_paths:
@@ -360,31 +475,15 @@ def compose_user_photos_into_frame(
     with Image.open(primary_path) as p_im:
         p_rgb = p_im.convert("RGB")
 
-    # Background blurred/tinted canvas so the subject pops immediately
     bg_scale = max(target_w / max(1, p_rgb.width), target_h / max(1, p_rgb.height))
     bg_w = max(target_w, int(round(p_rgb.width * bg_scale)))
     bg_h = max(target_h, int(round(p_rgb.height * bg_scale)))
     bg = p_rgb.resize((bg_w, bg_h), resampling)
     bx = max(0, (bg_w - target_w) // 2)
     by = max(0, (bg_h - target_h) // 2)
-    bg = bg.crop((bx, by, bx + target_w, by + target_h)).filter(ImageFilter.GaussianBlur(radius=22))
-    bg = ImageEnhance.Brightness(bg).enhance(0.55 if directives["pop_boost"] else 0.65)
-    bg = ImageEnhance.Color(bg).enhance(1.25)
-
-    canvas = bg.convert("RGBA")
-    draw = ImageDraw.Draw(canvas)
-
-    # Subtle radial glow behind focal subject so it pops
-    glow_layer = Image.new("RGBA", (target_w, target_h), (0, 0, 0, 0))
-    g_draw = ImageDraw.Draw(glow_layer)
-    gx0 = int(target_w * 0.14)
-    gy0 = int(target_h * 0.14)
-    gx1 = int(target_w * 0.86)
-    gy1 = int(target_h * 0.68)
-    g_draw.ellipse([gx0, gy0, gx1, gy1], fill=(255, 195, 85, 58 if directives["pop_boost"] else 32))
-    glow_layer = glow_layer.filter(ImageFilter.GaussianBlur(radius=36))
-    canvas = Image.alpha_composite(canvas, glow_layer)
-    draw = ImageDraw.Draw(canvas)
+    bg = bg.crop((bx, by, bx + target_w, by + target_h)).filter(ImageFilter.GaussianBlur(radius=16))
+    bg = ImageEnhance.Brightness(bg).enhance(0.58)
+    canvas = bg.copy()
 
     def _fit_box(src_img, box_w, box_h):
         sc = min(box_w / max(1, src_img.width), box_h / max(1, src_img.height))
@@ -395,74 +494,36 @@ def compose_user_photos_into_frame(
     if directives["layout_mode"] == "Split Pop" and secondary_path:
         with Image.open(secondary_path) as s_im:
             s_rgb = s_im.convert("RGB")
-        half_h = int(target_h * 0.36)
-        box_w = int(target_w * 0.86)
+        half_h = int(target_h * 0.40)
+        box_w = int(target_w * 0.90)
         top_fg = _fit_box(p_rgb, box_w, half_h)
         bot_fg = _fit_box(s_rgb, box_w, half_h)
-
-        top_x = (target_w - top_fg.width) // 2
-        top_y = int(target_h * 0.10)
-        bot_x = (target_w - bot_fg.width) // 2
-        bot_y = int(target_h * 0.49)
-
-        draw.rounded_rectangle(
-            [top_x - 6, top_y - 6, top_x + top_fg.width + 6, top_y + top_fg.height + 6],
-            radius=16,
-            fill=(255, 195, 75, 220),
-        )
-        canvas.paste(top_fg, (top_x, top_y))
-
-        draw.rounded_rectangle(
-            [bot_x - 6, bot_y - 6, bot_x + bot_fg.width + 6, bot_y + bot_fg.height + 6],
-            radius=16,
-            fill=(255, 46, 99, 210),
-        )
-        canvas.paste(bot_fg, (bot_x, bot_y))
+        gap = max(12, int(target_h * 0.02))
+        total_stack_h = top_fg.height + gap + bot_fg.height
+        top_y = max(16, (target_h - total_stack_h) // 2)
+        bot_y = top_y + top_fg.height + gap
+        canvas.paste(top_fg, ((target_w - top_fg.width) // 2, top_y))
+        canvas.paste(bot_fg, ((target_w - bot_fg.width) // 2, bot_y))
     else:
-        max_fw = int(target_w * (0.90 if directives["layout_mode"] == "Full Pop" else 0.84))
-        max_fh = int(target_h * (0.66 if directives["layout_mode"] == "Full Pop" else 0.58))
+        max_fw = int(target_w * 0.94)
+        max_fh = int(target_h * 0.82)
         fg = _fit_box(p_rgb, max_fw, max_fh)
         fx = (target_w - fg.width) // 2
-        fy = int(target_h * 0.14)
-
-        draw.rounded_rectangle(
-            [fx - 6, fy - 6, fx + fg.width + 6, fy + fg.height + 6],
-            radius=18,
-            fill=(255, 200, 80, 225 if directives["pop_boost"] else 160),
-        )
+        fy = max(16, int(target_h * 0.07))
         canvas.paste(fg, (fx, fy))
 
-    # Optional secondary mini-badge if user uploaded 3+ photos
-    if len(valid_paths) >= 3:
-        third_path = valid_paths[(scene_idx + 2) % len(valid_paths)]
-        with Image.open(third_path) as t_im:
-            t_thumb = _fit_box(t_im.convert("RGB"), int(target_w * 0.22), int(target_h * 0.14))
-        tx = target_w - t_thumb.width - int(target_w * 0.06)
-        ty = int(target_h * 0.15)
-        draw.rounded_rectangle(
-            [tx - 4, ty - 4, tx + t_thumb.width + 4, ty + t_thumb.height + 4],
-            radius=10,
-            fill=(255, 255, 255, 230),
-        )
-        canvas.paste(t_thumb, (tx, ty))
-
-    out_rgb = canvas.convert("RGB")
-    if directives["pop_boost"]:
-        out_rgb = ImageEnhance.Contrast(out_rgb).enhance(1.16)
-        out_rgb = ImageEnhance.Color(out_rgb).enhance(1.24)
-
     if caption_text and caption_text.strip() and caption_lang != "None":
-        out_rgb = draw_subtitle_on_frame(
-            out_rgb,
+        canvas = draw_subtitle_on_frame(
+            canvas,
             subtitle_text=caption_text.strip(),
             target_w=target_w,
             target_h=target_h,
             lang=caption_lang,
             position="Bottom",
-            scale=1.08,
+            scale=0.85,
         )
 
-    return ensure_exact_size(out_rgb, target_w, target_h, bg_mode=bg_mode)
+    return ensure_exact_size(canvas, target_w, target_h, bg_mode="Crop Fill")
 
 
 def swap_scenes_and_media(idx_a, idx_b):
@@ -470,6 +531,8 @@ def swap_scenes_and_media(idx_a, idx_b):
     n_sc = len(st.session_state.scenes)
     if not (0 <= idx_a < n_sc and 0 <= idx_b < n_sc and idx_a != idx_b):
         return
+
+    record_undo_step(f"Reorder Scene {idx_a + 1} & {idx_b + 1}")
 
     st.session_state.scenes[idx_a], st.session_state.scenes[idx_b] = (
         st.session_state.scenes[idx_b],
@@ -595,6 +658,7 @@ def trim_video_clip_file(src_path, out_path, start_sec, end_sec):
             codec="libx264",
             audio_codec="aac" if src.audio is not None else None,
             audio=src.audio is not None,
+            ffmpeg_params=["-crf", "18", "-preset", "medium", "-pix_fmt", "yuv420p"],
             logger=None,
         )
         return out_path
@@ -626,6 +690,7 @@ def split_video_clip_file(src_path, split_sec, part_a_path, part_b_path):
             codec="libx264",
             audio_codec="aac" if src.audio is not None else None,
             audio=src.audio is not None,
+            ffmpeg_params=["-crf", "18", "-preset", "medium", "-pix_fmt", "yuv420p"],
             logger=None,
         )
 
@@ -636,6 +701,7 @@ def split_video_clip_file(src_path, split_sec, part_a_path, part_b_path):
             codec="libx264",
             audio_codec="aac" if src.audio is not None else None,
             audio=src.audio is not None,
+            ffmpeg_params=["-crf", "18", "-preset", "medium", "-pix_fmt", "yuv420p"],
             logger=None,
         )
         return part_a_path, part_b_path
@@ -662,7 +728,7 @@ def ensure_exact_size(pil_img, target_w, target_h, bg_mode="Blur Canvas"):
         bg = rgb.resize((bg_w, bg_h), resampling)
         bx = max(0, (bg_w - target_w) // 2)
         by = max(0, (bg_h - target_h) // 2)
-        bg = bg.crop((bx, by, bx + target_w, by + target_h)).filter(ImageFilter.GaussianBlur(radius=18))
+        bg = bg.crop((bx, by, bx + target_w, by + target_h)).filter(ImageFilter.GaussianBlur(radius=16))
         bg = ImageEnhance.Brightness(bg).enhance(0.62)
 
         fg_scale = min(target_w / max(1, rgb.width), target_h / max(1, rgb.height))
@@ -720,11 +786,11 @@ def apply_pil_effects(
         dark = Image.new("RGB", (w, h), (0, 0, 0))
         out = Image.composite(out, dark, vig)
     elif video_fx == "Flash White":
-        out = ImageEnhance.Brightness(out).enhance(1.42)
+        out = ImageEnhance.Brightness(out).enhance(1.30)
     elif video_fx == "Glitch RGB":
         r, g, b = out.split()
-        r = ImageEnhance.Brightness(r).enhance(1.2)
-        b = ImageEnhance.Contrast(b).enhance(1.3)
+        r = ImageEnhance.Brightness(r).enhance(1.15)
+        b = ImageEnhance.Contrast(b).enhance(1.20)
         out = Image.merge("RGB", (r, g, b))
 
     return out
@@ -1052,57 +1118,58 @@ def draw_subtitle_on_frame(
     target_h,
     lang="English",
     position="Bottom",
-    scale=1.0,
+    scale=0.85,
 ):
-    """Draw a readable subtitle/caption banner at Bottom, Center, or Top with adjustable scale."""
+    """Draw a compact, high-legibility subtitle strip without covering the main subject."""
     if not subtitle_text or not subtitle_text.strip() or lang == "None":
         return frame_pil
 
     img_rgba = frame_pil.convert("RGBA")
     draw = ImageDraw.Draw(img_rgba)
 
-    safe_scale = max(0.65, min(1.6, float(scale or 1.0)))
-    font_size = max(22, int(round(target_w * 0.036 * safe_scale)))
+    safe_scale = max(0.60, min(1.25, float(scale or 0.85)))
+    font_size = max(18, int(round(min(target_w, target_h) * 0.028 * safe_scale)))
     font, _ = _find_font(font_size, lang=lang)
     lang_code = "kn" if lang == "Kannada" else "en"
 
-    chars_per_line = max(12, int(target_w / max(10, font_size * 0.62)))
-    wrapped_lines = textwrap.wrap(subtitle_text.strip(), width=chars_per_line)[:3]
+    chars_per_line = max(18, int((target_w * 0.84) / max(9, font_size * 0.56)))
+    wrapped_lines = textwrap.wrap(subtitle_text.strip(), width=chars_per_line)[:2]
     if not wrapped_lines:
         return frame_pil
 
-    line_h = font_size + 14
-    box_h = len(wrapped_lines) * line_h + 24
-    pad_x = max(18, int(target_w * 0.04))
+    line_h = font_size + 8
+    pad_y = 8
+    box_h = len(wrapped_lines) * line_h + pad_y * 2
+    pad_x = max(16, int(target_w * 0.05))
 
     if position == "Top":
-        box_top = max(18, int(target_h * 0.06))
+        box_top = max(14, int(target_h * 0.04))
     elif position == "Center":
-        box_top = max(18, (target_h - box_h) // 2)
+        box_top = max(14, (target_h - box_h) // 2)
     else:
-        box_top = max(18, target_h - box_h - max(42, int(target_h * 0.07)))
+        box_top = max(14, target_h - box_h - max(24, int(target_h * 0.04)))
 
-    box_bot = min(target_h - 14, box_top + box_h)
-    box_top = max(14, box_bot - box_h)
+    box_bot = min(target_h - 12, box_top + box_h)
+    box_top = max(12, box_bot - box_h)
 
     draw.rounded_rectangle(
         [pad_x, box_top, target_w - pad_x, box_bot],
-        radius=14,
-        fill=(10, 14, 22, 218),
+        radius=10,
+        fill=(8, 11, 18, 195),
     )
 
-    cur_y = box_top + 12
+    cur_y = box_top + pad_y
     for line in wrapped_lines:
         try:
             bbox = draw.textbbox((0, 0), line, font=font, language=lang_code)
         except TypeError:
             bbox = draw.textbbox((0, 0), line, font=font)
         text_w = bbox[2] - bbox[0]
-        text_x = max(pad_x + 12, (target_w - text_w) // 2)
+        text_x = max(pad_x + 10, (target_w - text_w) // 2)
 
         for ox, oy, col in [
-            (text_x + 2, cur_y + 2, (0, 0, 0, 245)),
-            (text_x, cur_y, (255, 250, 220, 255)),
+            (text_x + 1, cur_y + 1, (0, 0, 0, 235)),
+            (text_x, cur_y, (255, 252, 240, 255)),
         ]:
             try:
                 draw.text((ox, oy), line, font=font, fill=col, language=lang_code)
@@ -1123,21 +1190,21 @@ def build_motion_clip(
     subtitle_text="",
     subtitle_lang="None",
     subtitle_pos="Bottom",
-    subtitle_scale=1.0,
-    enable_char_motion=True,
+    subtitle_scale=0.85,
+    enable_char_motion=False,
     brightness=1.0,
-    contrast=1.0,
-    saturation=1.0,
+    contrast=1.04,
+    saturation=1.06,
     blur_radius=0.0,
     video_fx="None",
     bg_mode="Blur Canvas",
 ):
-    """Create animated scene frames with exact target_w x target_h dimensions and studio FX."""
+    """Smooth, high-sharpness 24-fps motion clip using lossless PNG frames."""
     resampling = getattr(Image, "Resampling", Image).LANCZOS
     modes = ["Zoom In", "Pan Right", "Zoom Out", "Pan Left"]
     active_mode = modes[scene_idx % len(modes)] if motion_mode == "Auto Alternate" else motion_mode
 
-    overscan = 1.16
+    overscan = 1.08
     canvas_w = int(round(target_w * overscan))
     canvas_h = int(round(target_h * overscan))
 
@@ -1146,7 +1213,7 @@ def build_motion_clip(
         canvas_np = np.asarray(exact_base, dtype=np.uint8)
 
     safe_dur = max(float(duration), 0.5)
-    num_steps = max(6, min(20, int(round(safe_dur * 4))))
+    num_steps = max(12, min(48, int(round(safe_dur * 12))))
     step_dur = safe_dur / num_steps
     subclips = []
 
@@ -1155,36 +1222,33 @@ def build_motion_clip(
         progress = s_idx / max(1, num_steps - 1)
         ease = progress * progress * (3.0 - 2.0 * progress)
 
-        char_sway_x = int(round(math.sin(s_idx * 1.1 + scene_idx) * 6)) if enable_char_motion else 0
-        char_bob_y = int(round(abs(math.cos(s_idx * 1.4 + scene_idx)) * 5)) if enable_char_motion else 0
-
         if video_fx == "Zoom Punch":
-            scale = 1.0 + 0.22 * abs(math.sin(progress * math.pi))
+            scale = 1.0 + 0.08 * math.sin(progress * math.pi)
         elif active_mode == "Zoom In":
-            scale = 1.0 + 0.12 * ease
+            scale = 1.0 + 0.06 * ease
         elif active_mode == "Zoom Out":
-            scale = 1.12 - 0.12 * ease
+            scale = 1.06 - 0.06 * ease
         else:
-            scale = 1.05
+            scale = 1.04
 
         win_w = max(2, int(round(target_w / scale)))
         win_h = max(2, int(round(target_h / scale)))
 
         if active_mode == "Pan Right":
             max_x = max(0, canvas_w - win_w)
-            x0 = int(round(max_x * ease)) + char_sway_x
-            y0 = max(0, (canvas_h - win_h) // 2) + char_bob_y
+            x0 = int(round(max_x * ease))
+            y0 = max(0, (canvas_h - win_h) // 2)
         elif active_mode == "Pan Left":
             max_x = max(0, canvas_w - win_w)
-            x0 = int(round(max_x * (1.0 - ease))) + char_sway_x
-            y0 = max(0, (canvas_h - win_h) // 2) + char_bob_y
+            x0 = int(round(max_x * (1.0 - ease)))
+            y0 = max(0, (canvas_h - win_h) // 2)
         else:
-            x0 = (canvas_w - win_w) // 2 + char_sway_x
-            y0 = (canvas_h - win_h) // 2 + char_bob_y
+            x0 = (canvas_w - win_w) // 2
+            y0 = (canvas_h - win_h) // 2
 
         if video_fx == "Shake":
-            x0 += int(round(math.sin(s_idx * 3.5) * 8))
-            y0 += int(round(math.cos(s_idx * 4.2) * 6))
+            x0 += int(round(math.sin(s_idx * 2.2) * 4))
+            y0 += int(round(math.cos(s_idx * 2.7) * 3))
 
         x0 = min(max(0, x0), max(0, canvas_w - win_w))
         y0 = min(max(0, y0), max(0, canvas_h - win_h))
@@ -1215,8 +1279,8 @@ def build_motion_clip(
             )
 
         frame_pil = ensure_exact_size(frame_pil, target_w, target_h, bg_mode="Crop Fill")
-        frame_path = os.path.join("motion_frames", f"s{scene_idx}_f{s_idx}.jpg")
-        frame_pil.save(frame_path, format="JPEG", quality=92)
+        frame_path = os.path.join("motion_frames", f"s{scene_idx}_f{s_idx}.png")
+        frame_pil.save(frame_path, format="PNG")
         subclips.append(apply_duration(ImageClip(frame_path), step_dur))
 
     return concatenate_videoclips(subclips, method="chain")
@@ -1233,16 +1297,16 @@ def render_single_scene_video(
     subtitle_text="",
     subtitle_lang="None",
     subtitle_pos="Bottom",
-    subtitle_scale=1.0,
-    enable_char_motion=True,
+    subtitle_scale=0.85,
+    enable_char_motion=False,
     brightness=1.0,
-    contrast=1.0,
-    saturation=1.0,
+    contrast=1.04,
+    saturation=1.06,
     blur_radius=0.0,
     video_fx="None",
     bg_mode="Blur Canvas",
 ):
-    """Render and save a standalone MP4 video clip for a single scene."""
+    """Render a crisp 24-fps MP4 scene clip."""
     clip = build_motion_clip(
         img_path=img_path,
         target_w=target_w,
@@ -1268,6 +1332,7 @@ def render_single_scene_video(
             fps=24,
             codec="libx264",
             audio=False,
+            ffmpeg_params=["-crf", "18", "-preset", "medium", "-pix_fmt", "yuv420p"],
             logger=None,
         )
         return out_path
@@ -1287,10 +1352,10 @@ def build_uploaded_video_clip(
     subtitle_text="",
     subtitle_lang="None",
     subtitle_pos="Bottom",
-    subtitle_scale=1.0,
+    subtitle_scale=0.85,
     brightness=1.0,
-    contrast=1.0,
-    saturation=1.0,
+    contrast=1.04,
+    saturation=1.06,
     blur_radius=0.0,
     video_fx="None",
     bg_mode="Blur Canvas",
@@ -1349,8 +1414,8 @@ def build_uploaded_video_clip(
                     position=subtitle_pos,
                     scale=subtitle_scale,
                 )
-            p_f = os.path.join("video_passes", f"vp_{scene_idx}_{idx_f}.jpg")
-            pil_f.save(p_f, format="JPEG", quality=90)
+            p_f = os.path.join("video_passes", f"vp_{scene_idx}_{idx_f}.png")
+            pil_f.save(p_f, format="PNG")
             step_clips.append(apply_duration(ImageClip(p_f), actual_step))
 
         merged = concatenate_videoclips(step_clips, method="chain")
@@ -1622,7 +1687,7 @@ def generate_real_ai_scene(
     ref_photo_paths=None,
     arrangement_cmd="",
     caption_text="",
-    caption_lang="English",
+    caption_lang="None",
     allow_local_bypass=True,
     emotion_label="",
     seed_offset=0,
@@ -1740,7 +1805,7 @@ def generate_real_ai_scene(
                         target_h=target_h,
                         lang=caption_lang,
                         position="Bottom",
-                        scale=1.08,
+                        scale=0.85,
                     )
                 return img, src_name, errors
             except Exception as exc:
@@ -1771,7 +1836,7 @@ def generate_real_ai_scene(
                 target_h=target_h,
                 lang=caption_lang,
                 position="Bottom",
-                scale=1.08,
+                scale=0.85,
             )
         return base_sc, "Local Storyboard Bypass", errors
 
@@ -1820,7 +1885,7 @@ def apply_clip_transition(clips, transition_name="Crossfade", trans_sec=0.5):
 def export_project_json():
     """Serialize studio state into a portable JSON project payload."""
     payload = {
-        "version": "2.3-pro",
+        "version": "2.4-pro",
         "format_preset": st.session_state.format_preset,
         "bg_fit_mode": st.session_state.bg_fit_mode,
         "playback_speed": st.session_state.playback_speed,
@@ -1853,6 +1918,7 @@ def export_project_json():
 
 def import_project_json(raw_json_str):
     """Restore studio settings and scenes from a JSON project file."""
+    record_undo_step("Restore JSON Project")
     data = json.loads(raw_json_str)
     if not isinstance(data, dict):
         raise ValueError("Invalid project JSON structure.")
@@ -1915,7 +1981,7 @@ def import_project_json(raw_json_str):
         sync_scene_widget_states(st.session_state.scenes)
 
 
-# --- TOP STUDIO BANNER ---
+# --- TOP STUDIO BANNER + 3-STEP UNDO / REDO BAR ---
 st.markdown(
     """
     <div class="studio-header">
@@ -1923,11 +1989,36 @@ st.markdown(
             <span class="studio-pill">AI STUDIO PRO</span>
             <span style="font-weight:700;font-size:17px;">Movie, Shorts & Reels Creation Suite</span>
         </div>
-        <div class="studio-sub">Unlimited Photos & Videos • Custom Arrangement & Wordings • Trim, Split & Reorder</div>
+        <div class="studio-sub">3-Step Undo / Redo • Unlimited Photos & Videos • Custom Arrangement & Wordings</div>
     </div>
     """,
     unsafe_allow_html=True,
 )
+
+ur_col1, ur_col2, ur_col3 = st.columns([1.0, 1.0, 2.2])
+with ur_col1:
+    undo_count = len(st.session_state.undo_stack)
+    if st.button(
+        f"↩️ Undo ({undo_count}/{MAX_HISTORY_STEPS})",
+        key="btn_undo_3",
+        disabled=(undo_count == 0),
+        use_container_width=True,
+    ):
+        if perform_undo():
+            st.rerun()
+with ur_col2:
+    redo_count = len(st.session_state.redo_stack)
+    if st.button(
+        f"↪️ Redo ({redo_count}/{MAX_HISTORY_STEPS})",
+        key="btn_redo_3",
+        disabled=(redo_count == 0),
+        use_container_width=True,
+    ):
+        if perform_redo():
+            st.rerun()
+with ur_col3:
+    status_txt = st.session_state.last_history_label or "Ready — up to 3 Undo & 3 Redo steps available"
+    st.caption(f"History: **{status_txt}** • Undo left: `{undo_count}` | Redo left: `{redo_count}`")
 
 # --- SIDEBAR: FORMAT, AI KEYS, CHARACTER COMMANDS & PROJECT SAVE/LOAD ---
 with st.sidebar:
@@ -2095,6 +2186,7 @@ with st.expander("🖥️ Compact Preview Stage, Studio Controls & Clip Trim/Spl
         with ctrl_tabs[0]:
             mood_sel = st.selectbox("One-Tap Color Mood", list(MOOD_FILTERS.keys()), key="mood_sel_box")
             if st.button("Apply Color Mood", key="apply_mood_btn"):
+                record_undo_step(f"Color Mood: {mood_sel}")
                 m = MOOD_FILTERS[mood_sel]
                 st.session_state.editor_brightness = m["b"]
                 st.session_state.editor_contrast = m["c"]
@@ -2104,30 +2196,42 @@ with st.expander("🖥️ Compact Preview Stage, Studio Controls & Clip Trim/Spl
 
             sl1, sl2 = st.columns(2)
             with sl1:
-                st.session_state.editor_brightness = st.slider(
+                b_val = st.slider(
                     "Brightness", 0.5, 1.6, float(st.session_state.editor_brightness), 0.05, key="sl_b"
                 )
-                st.session_state.editor_contrast = st.slider(
+                c_val = st.slider(
                     "Contrast", 0.5, 1.8, float(st.session_state.editor_contrast), 0.05, key="sl_c"
                 )
             with sl2:
-                st.session_state.editor_saturation = st.slider(
+                s_val = st.slider(
                     "Saturation", 0.0, 2.0, float(st.session_state.editor_saturation), 0.05, key="sl_s"
                 )
-                st.session_state.editor_blur = st.slider(
+                blur_val = st.slider(
                     "Soft Blur", 0.0, 6.0, float(st.session_state.editor_blur), 0.25, key="sl_blur"
                 )
 
+            if (
+                abs(b_val - float(st.session_state.editor_brightness)) > 1e-4
+                or abs(c_val - float(st.session_state.editor_contrast)) > 1e-4
+                or abs(s_val - float(st.session_state.editor_saturation)) > 1e-4
+                or abs(blur_val - float(st.session_state.editor_blur)) > 1e-4
+            ):
+                record_undo_step("Adjust Color & Blur")
+                st.session_state.editor_brightness = b_val
+                st.session_state.editor_contrast = c_val
+                st.session_state.editor_saturation = s_val
+                st.session_state.editor_blur = blur_val
+
             fx1, fx2, fx3 = st.columns(3)
             with fx1:
-                st.session_state.editor_video_fx = st.selectbox(
+                vfx_val = st.selectbox(
                     "Video Effect",
                     VIDEO_FX_CHOICES,
                     index=VIDEO_FX_CHOICES.index(st.session_state.editor_video_fx),
                     key="sel_vfx",
                 )
             with fx2:
-                st.session_state.editor_transition = st.selectbox(
+                trans_val = st.selectbox(
                     "Transition",
                     ["None", "Crossfade", "Fade", "Slide Left", "Slide Right"],
                     index=["None", "Crossfade", "Fade", "Slide Left", "Slide Right"].index(
@@ -2136,9 +2240,19 @@ with st.expander("🖥️ Compact Preview Stage, Studio Controls & Clip Trim/Spl
                     key="sel_trans",
                 )
             with fx3:
-                st.session_state.editor_transition_sec = st.slider(
+                tsec_val = st.slider(
                     "Trans (sec)", 0.1, 1.5, float(st.session_state.editor_transition_sec), 0.1, key="sl_tsec"
                 )
+
+            if (
+                vfx_val != st.session_state.editor_video_fx
+                or trans_val != st.session_state.editor_transition
+                or abs(tsec_val - float(st.session_state.editor_transition_sec)) > 1e-4
+            ):
+                record_undo_step("Update Video FX / Transition")
+                st.session_state.editor_video_fx = vfx_val
+                st.session_state.editor_transition = trans_val
+                st.session_state.editor_transition_sec = tsec_val
 
         with ctrl_tabs[1]:
             editable_vids = [p for p in st.session_state.scene_videos if os.path.exists(p)]
@@ -2183,6 +2297,7 @@ with st.expander("🖥️ Compact Preview Stage, Studio Controls & Clip Trim/Spl
                         if trim_end <= trim_start + 0.15:
                             st.error("Trim End must be at least 0.2s after Trim Start.")
                         else:
+                            record_undo_step(f"Trim Clip {target_v_idx + 1}")
                             os.makedirs("edited_clips", exist_ok=True)
                             trimmed_out = os.path.join(
                                 "edited_clips", f"trimmed_{target_v_idx}_{int(time.time())}.mp4"
@@ -2204,6 +2319,7 @@ with st.expander("🖥️ Compact Preview Stage, Studio Controls & Clip Trim/Spl
                         key="split_point_val",
                     )
                     if st.button("🔀 Split Clip", key="btn_apply_split", use_container_width=True):
+                        record_undo_step(f"Split Clip {target_v_idx + 1}")
                         os.makedirs("edited_clips", exist_ok=True)
                         ts_now = int(time.time())
                         pa_path = os.path.join("edited_clips", f"split_{target_v_idx}_A_{ts_now}.mp4")
@@ -2234,6 +2350,7 @@ with st.expander("🖥️ Compact Preview Stage, Studio Controls & Clip Trim/Spl
                 key="sfx_sc_num",
             ) - 1
             if st.button("➕ Attach Sound Effect", key="attach_sfx_btn"):
+                record_undo_step(f"Sound FX Scene {sc_target + 1}")
                 if sfx_pick == "None":
                     st.session_state.scene_audio_fx.pop(sc_target, None)
                     st.info(f"Removed sound effect from Scene {sc_target + 1}.")
@@ -2246,13 +2363,13 @@ with st.expander("🖥️ Compact Preview Stage, Studio Controls & Clip Trim/Spl
                         st.error("Could not load that audio sample.")
 
         with ctrl_tabs[3]:
-            st.session_state.bg_fit_mode = st.selectbox(
+            bg_fit_val = st.selectbox(
                 "Canvas Framing Mode",
                 ["Blur Canvas", "Crop Fill"],
                 index=["Blur Canvas", "Crop Fill"].index(st.session_state.bg_fit_mode),
                 key="bg_fit_box",
             )
-            st.session_state.playback_speed = st.select_slider(
+            spd_val = st.select_slider(
                 "Video Speed",
                 options=[0.5, 0.75, 1.0, 1.25, 1.5, 2.0],
                 value=float(st.session_state.playback_speed),
@@ -2260,14 +2377,14 @@ with st.expander("🖥️ Compact Preview Stage, Studio Controls & Clip Trim/Spl
             )
             tf_c1, tf_c2 = st.columns(2)
             with tf_c1:
-                st.session_state.subtitle_position = st.selectbox(
+                sub_pos_val = st.selectbox(
                     "Subtitle Position",
                     SUBTITLE_POSITIONS,
                     index=SUBTITLE_POSITIONS.index(st.session_state.subtitle_position),
                     key="sub_pos_box",
                 )
             with tf_c2:
-                st.session_state.subtitle_scale = st.slider(
+                sub_scale_val = st.slider(
                     "Subtitle Size Scale",
                     0.7,
                     1.5,
@@ -2276,18 +2393,34 @@ with st.expander("🖥️ Compact Preview Stage, Studio Controls & Clip Trim/Spl
                     key="sub_scale_sl",
                 )
 
-            st.session_state.custom_title_text = st.text_input(
+            title_txt_val = st.text_input(
                 "Hook / Title Overlay Text",
                 value=st.session_state.custom_title_text,
                 placeholder="Example: Ancient Yuga Chronicle!",
                 key="title_overlay_input",
             )
-            st.session_state.custom_title_lang = st.selectbox(
+            title_lang_val = st.selectbox(
                 "Overlay / Preview Text Language",
                 ["English", "Kannada"],
                 index=["English", "Kannada"].index(st.session_state.custom_title_lang),
                 key="title_overlay_lang",
             )
+
+            if (
+                bg_fit_val != st.session_state.bg_fit_mode
+                or abs(spd_val - float(st.session_state.playback_speed)) > 1e-4
+                or sub_pos_val != st.session_state.subtitle_position
+                or abs(sub_scale_val - float(st.session_state.subtitle_scale)) > 1e-4
+                or title_txt_val != st.session_state.custom_title_text
+                or title_lang_val != st.session_state.custom_title_lang
+            ):
+                record_undo_step("Text & Framing Update")
+                st.session_state.bg_fit_mode = bg_fit_val
+                st.session_state.playback_speed = spd_val
+                st.session_state.subtitle_position = sub_pos_val
+                st.session_state.subtitle_scale = sub_scale_val
+                st.session_state.custom_title_text = title_txt_val
+                st.session_state.custom_title_lang = title_lang_val
 
         with ctrl_tabs[4]:
             up_p_col, up_v_col, up_a_col = st.columns(3)
@@ -2299,6 +2432,7 @@ with st.expander("🖥️ Compact Preview Stage, Studio Controls & Clip Trim/Spl
                     key="up_photo_files_top",
                 )
                 if st.button("Add Photos", key="btn_add_photos_top") and p_files_top:
+                    record_undo_step("Add Photos")
                     os.makedirs("uploaded_studio_media", exist_ok=True)
                     new_p = []
                     for i_p, pf in enumerate(p_files_top):
@@ -2319,6 +2453,7 @@ with st.expander("🖥️ Compact Preview Stage, Studio Controls & Clip Trim/Spl
                     key="up_vid_files",
                 )
                 if st.button("Add Videos", key="btn_add_vids") and v_files:
+                    record_undo_step("Add Videos")
                     os.makedirs("uploaded_studio_media", exist_ok=True)
                     new_v = []
                     for i_u, uf in enumerate(v_files):
@@ -2340,6 +2475,7 @@ with st.expander("🖥️ Compact Preview Stage, Studio Controls & Clip Trim/Spl
                     key="up_aud_files",
                 )
                 if st.button("Add as BGM Track", key="btn_add_bgm") and a_files:
+                    record_undo_step("Load BGM Track")
                     os.makedirs("uploaded_studio_media", exist_ok=True)
                     af = a_files[0]
                     ext = os.path.splitext(af.name)[1].lower() or ".mp3"
@@ -2391,6 +2527,7 @@ with tab1:
         if not rough_story.strip():
             st.error("Please enter a story or command first.")
         elif not api_key or not api_key.strip():
+            record_undo_step("Generate Smart Scenes")
             st.session_state.scenes = build_fallback_scenes_from_rough_story(
                 rough_story, num_scenes, st.session_state.locked_character_prompt
             )
@@ -2404,6 +2541,7 @@ with tab1:
             st.success(f"Created {len(st.session_state.scenes)} smart scenes with AI B-roll, motion & FX suggestions.")
             st.rerun()
         else:
+            record_undo_step("Generate Smart Scenes")
             fallback_models = [
                 "gemini-3.8-flash",
                 "gemini-3.6-flash",
@@ -2496,6 +2634,7 @@ with tab1:
                 st.rerun()
 
     if ai_sug_clicked:
+        record_undo_step("AI Suggest B-Roll & FX")
         with st.spinner("Analyzing scenes for AI B-roll, camera motion & video FX suggestions..."):
             suggested_list = ai_suggest_broll_and_fx_for_scenes(api_key, st.session_state.scenes)
             st.session_state.scenes = suggested_list
@@ -2513,6 +2652,7 @@ with tab1:
         if not api_key or not api_key.strip():
             st.error("Add your Gemini API Key in the sidebar to translate with AI.")
         else:
+            record_undo_step("Translate All to Kannada")
             en_list = [
                 (st.session_state.get(f"nar_{i}", sc.get("narration", "")) or f"Scene {i + 1}.").strip()
                 for i, sc in enumerate(st.session_state.scenes)
@@ -2599,6 +2739,7 @@ with tab2:
             key="multi_ref_photos_tab2",
         )
         if st.button("➕ Save Uploaded Photos to Pool", key="btn_save_multi_photos_t2") and multi_photo_uploads:
+            record_undo_step("Save Reel Photos")
             os.makedirs("uploaded_studio_media", exist_ok=True)
             saved_now = []
             for idx_u, uf in enumerate(multi_photo_uploads):
@@ -2619,6 +2760,7 @@ with tab2:
             key="multi_reel_videos_tab2",
         )
         if st.button("➕ Add Uploaded Videos to Timeline", key="btn_save_multi_vids_t2") and multi_vid_uploads:
+            record_undo_step("Add Reel Videos")
             os.makedirs("uploaded_studio_media", exist_ok=True)
             saved_vids = []
             for idx_v, vf in enumerate(multi_vid_uploads):
@@ -2643,19 +2785,24 @@ with tab2:
     st.markdown("#### 2. How Should Your Photos/Videos Be Arranged So That They Pop + Custom Script / Wordings")
     arr_col, word_col = st.columns(2)
     with arr_col:
-        st.session_state.arrangement_command = st.text_area(
+        arr_input = st.text_area(
             "Arrangement & Pop Instructions (How it should be arranged so that it pops):",
             value=st.session_state.arrangement_command,
             height=90,
-            placeholder="Example: Split pop layout with golden border, zoom punch, high contrast so subjects pop cleanly",
+            placeholder="Example: Split pop layout with smooth zoom, crisp details, and optional reel wordings",
         )
     with word_col:
-        st.session_state.reel_wordings_input = st.text_area(
+        word_input = st.text_area(
             "Custom Script / Wordings on Clips (One line per scene/reel, or leave blank to use scene script):",
             value=st.session_state.reel_wordings_input,
             height=90,
             placeholder="Line 1: Sacred Dawn Begins\nLine 2: Rising Power & Light\nLine 3: Timeless Yuga Moment\nLine 4: Grand Finale",
         )
+
+    if arr_input != st.session_state.arrangement_command or word_input != st.session_state.reel_wordings_input:
+        record_undo_step("Update Arrangement / Wordings")
+        st.session_state.arrangement_command = arr_input
+        st.session_state.reel_wordings_input = word_input
 
     art_style = st.selectbox(
         "Visual Style (When Using AI Image Engine)",
@@ -2673,7 +2820,7 @@ with tab2:
     with opt2:
         per_scene_sec = st.slider("Base Clip Duration (sec)", 2.0, 10.0, 4.0, 0.5)
     with opt3:
-        tab2_sub_lang = st.selectbox("Wordings / Subtitles Language", ["English", "Kannada", "None"], index=0)
+        tab2_sub_lang = st.selectbox("Wordings / Subtitles Language", ["None", "English", "Kannada"], index=0)
 
     allow_local_bypass = st.checkbox(
         "Use local storyboard frames if no API keys and no uploaded photos are provided",
@@ -2681,6 +2828,7 @@ with tab2:
     )
 
     if st.button("🎬 Generate All Scene / Reel Videos", type="primary"):
+        record_undo_step("Generate Scene / Reel Videos")
         active_scenes = sync_scenes_to_count(
             st.session_state.scenes,
             scene_count_slider,
@@ -2700,7 +2848,11 @@ with tab2:
             sc["kannada_narration"] = st.session_state.get(f"kn_script_{idx}", sc.get("kannada_narration", ""))
             sc["visual"] = st.session_state.get(f"vis_{idx}", sc.get("visual", ""))
             sc["emotion"] = st.session_state.get(f"emo_{idx}", sc.get("emotion", "Expressive"))
-            sc["motion"] = directives["motion_mode"] if st.session_state.arrangement_command.strip() else st.session_state.get(f"mot_{idx}", sc.get("motion", "Auto Alternate"))
+            sc["motion"] = (
+                directives["motion_mode"]
+                if st.session_state.arrangement_command.strip()
+                else st.session_state.get(f"mot_{idx}", sc.get("motion", "Auto Alternate"))
+            )
             sc["suggested_broll"] = st.session_state.get(f"broll_{idx}", sc.get("suggested_broll", ""))
 
             if idx < len(custom_lines):
@@ -2757,8 +2909,8 @@ with tab2:
                 scene_idx=idx,
                 ref_photo_paths=existing_photos,
                 arrangement_cmd=arr_note,
-                caption_text=sc_caption,
-                caption_lang=tab2_sub_lang,
+                caption_text="",
+                caption_lang="None",
                 allow_local_bypass=allow_local_bypass,
                 emotion_label=scene.get("emotion", "Expressive"),
                 seed_offset=batch_id * 100,
@@ -2788,10 +2940,10 @@ with tab2:
                 subtitle_lang=tab2_sub_lang,
                 subtitle_pos=st.session_state.subtitle_position,
                 subtitle_scale=st.session_state.subtitle_scale,
-                enable_char_motion=True,
-                brightness=st.session_state.editor_brightness + (0.06 if directives["pop_boost"] else 0.0),
-                contrast=st.session_state.editor_contrast + (0.10 if directives["pop_boost"] else 0.0),
-                saturation=st.session_state.editor_saturation + (0.12 if directives["pop_boost"] else 0.0),
+                enable_char_motion=False,
+                brightness=st.session_state.editor_brightness + (0.03 if directives["pop_boost"] else 0.0),
+                contrast=st.session_state.editor_contrast + (0.04 if directives["pop_boost"] else 0.0),
+                saturation=st.session_state.editor_saturation + (0.05 if directives["pop_boost"] else 0.0),
                 blur_radius=st.session_state.editor_blur,
                 video_fx=sc_fx,
                 bg_mode=st.session_state.bg_fit_mode,
@@ -2844,6 +2996,7 @@ with tab3:
         await comm.save(out_file)
 
     if st.button("🔊 Generate Voiceover for All Scenes", type="primary"):
+        record_undo_step("Generate Voiceover")
         try:
             st.session_state.audio_files = []
             prog_a = st.progress(0)
@@ -3002,7 +3155,7 @@ with tab4:
                                 subtitle_lang=final_sub_lang,
                                 subtitle_pos=st.session_state.subtitle_position,
                                 subtitle_scale=st.session_state.subtitle_scale,
-                                enable_char_motion=True,
+                                enable_char_motion=False,
                                 brightness=st.session_state.editor_brightness,
                                 contrast=st.session_state.editor_contrast,
                                 saturation=st.session_state.editor_saturation,
@@ -3051,6 +3204,7 @@ with tab4:
                         fps=24,
                         codec="libx264",
                         audio_codec="aac",
+                        ffmpeg_params=["-crf", "18", "-preset", "medium", "-pix_fmt", "yuv420p"],
                         logger=None,
                     )
 
