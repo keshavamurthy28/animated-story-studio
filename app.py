@@ -128,7 +128,7 @@ def build_motion_clip(img_path, target_w, target_h, duration, motion_mode="Auto 
 
 
 def modify_reference_into_scene(ref_pil, target_w, target_h, scene_idx, art_style):
-    """Adapt an uploaded reference image into a distinct scene frame."""
+    """Adapt an uploaded reference image into a playful toy-styled scene frame."""
     resampling = getattr(Image, "Resampling", Image).LANCZOS
     base = ref_pil.convert("RGB")
     cover_scale = max(target_w / max(1, base.width), target_h / max(1, base.height))
@@ -144,29 +144,21 @@ def modify_reference_into_scene(ref_pil, target_w, target_h, scene_idx, art_styl
     top = int(round(max(0, rh - target_h) * sy))
     framed = resized.crop((left, top, left + target_w, top + target_h))
 
-    style_lower = (art_style or "").lower()
-    if "photorealistic" in style_lower or "cinematic" in style_lower:
-        framed = ImageEnhance.Contrast(framed).enhance(1.1)
-        framed = ImageEnhance.Color(framed).enhance(1.08)
-    elif "ghibli" in style_lower or "watercolor" in style_lower:
-        framed = framed.filter(ImageFilter.SMOOTH_MORE)
-        framed = ImageEnhance.Color(framed).enhance(1.18)
-    else:
-        framed = ImageEnhance.Contrast(framed).enhance(1.15)
-        framed = ImageEnhance.Color(framed).enhance(1.2)
-
-    mood_factors = [1.0, 1.04, 0.96, 1.03, 0.98, 1.05]
+    framed = framed.filter(ImageFilter.SMOOTH_MORE)
+    framed = ImageEnhance.Contrast(framed).enhance(1.14)
+    framed = ImageEnhance.Color(framed).enhance(1.28)
+    mood_factors = [1.02, 1.06, 0.98, 1.04, 1.0, 1.06]
     framed = ImageEnhance.Brightness(framed).enhance(mood_factors[scene_idx % len(mood_factors)])
     return framed.convert("RGB")
 
 
 def make_local_scene_card(target_w, target_h, scene_idx, prompt_text):
-    """Illustrated forest & character fallback when external image APIs are not configured."""
-    top_sky = np.array([56, 152, 204], dtype=np.float32)
-    bot_sky = np.array([246, 218, 142], dtype=np.float32)
+    """Toy-like rounded character & playful forest fallback when external image APIs are unavailable."""
+    top_sky = np.array([92, 198, 245], dtype=np.float32)
+    bot_sky = np.array([255, 236, 168], dtype=np.float32)
     if scene_idx % 2 == 1:
-        top_sky = np.array([34, 86, 68], dtype=np.float32)
-        bot_sky = np.array([218, 142, 68], dtype=np.float32)
+        top_sky = np.array([76, 162, 196], dtype=np.float32)
+        bot_sky = np.array([255, 214, 148], dtype=np.float32)
 
     y_idx = np.linspace(0.0, 1.0, target_h)[:, None, None]
     grad = np.broadcast_to(top_sky * (1.0 - y_idx) + bot_sky * y_idx, (target_h, target_w, 3)).astype(np.uint8)
@@ -175,61 +167,88 @@ def make_local_scene_card(target_w, target_h, scene_idx, prompt_text):
 
     ground_y = int(target_h * 0.72)
 
-    # Sun / glow
-    sun_x, sun_y = int(target_w * 0.52), int(target_h * 0.34)
-    for rad in range(170, 20, -25):
-        draw.ellipse([sun_x - rad, sun_y - rad, sun_x + rad, sun_y + rad], fill=(255, 244, 180, 55))
+    # Toy sun with soft halo
+    sun_x, sun_y = int(target_w * 0.50), int(target_h * 0.28)
+    for rad in range(150, 25, -25):
+        draw.ellipse([sun_x - rad, sun_y - rad, sun_x + rad, sun_y + rad], fill=(255, 246, 185, 55))
+    draw.ellipse([sun_x - 42, sun_y - 42, sun_x + 42, sun_y + 42], fill=(255, 214, 72, 255), outline=(215, 158, 28, 255), width=3)
 
-    # Layered forest trees
-    step = max(80, target_w // 6)
+    # Toy forest trees (rounded canopies + chunky trunks)
+    step = max(85, target_w // 6)
     for idx_t, tx in enumerate(range(35, target_w + 50, step)):
-        draw.rectangle([tx - 10, ground_y - 150, tx + 10, ground_y + 10], fill=(82, 48, 26, 255))
-        fol_col = (48, 138, 62, 255) if idx_t % 2 == 0 else (36, 112, 52, 255)
-        for ox, oy, r in [(-24, -155, 36), (24, -155, 36), (0, -182, 44), (0, -140, 38)]:
-            draw.ellipse([tx + ox - r, ground_y + oy - r, tx + ox + r, ground_y + oy + r], fill=fol_col)
+        draw.rounded_rectangle([tx - 11, ground_y - 135, tx + 11, ground_y + 8], radius=6, fill=(138, 86, 46, 255), outline=(68, 38, 18, 255), width=2)
+        canopy_col = (96, 204, 92, 255) if idx_t % 2 == 0 else (76, 182, 84, 255)
+        draw.ellipse([tx - 44, ground_y - 195, tx + 44, ground_y - 115], fill=canopy_col, outline=(42, 118, 48, 255), width=3)
+        draw.ellipse([tx - 24, ground_y - 212, tx + 24, ground_y - 164], fill=canopy_col, outline=(42, 118, 48, 255), width=2)
 
-    # Forest floor & soil
-    draw.ellipse([-60, ground_y - 25, target_w + 60, ground_y + 55], fill=(86, 168, 62, 255))
-    draw.rectangle([0, ground_y + 15, target_w, target_h], fill=(70, 146, 50, 255))
+    # Playful toy grass meadow & soil base
+    draw.ellipse([-70, ground_y - 22, target_w + 70, ground_y + 52], fill=(124, 214, 86, 255))
+    draw.rectangle([0, ground_y + 15, target_w, target_h], fill=(104, 192, 74, 255))
     soil_y = min(target_h - 30, ground_y + int(target_h * 0.14))
-    draw.rectangle([0, soil_y, target_w, target_h], fill=(134, 86, 48, 255))
+    draw.rectangle([0, soil_y, target_w, target_h], fill=(166, 112, 66, 255))
 
-    # 4 boys + giant bear characters
-    boys = [
-        (0.18, 18, 106, (62, 164, 74)),
-        (0.30, 20, 112, (48, 156, 194)),
-        (0.42, 22, 116, (238, 154, 46)),
-        (0.54, 34, 110, (222, 84, 110)),
+    # 4 chubby toy boys with big round heads, rosy cheeks, and stubby limbs
+    toy_boys = [
+        (0.17, 22, 92, (82, 188, 96)),
+        (0.29, 24, 96, (76, 178, 224)),
+        (0.41, 25, 100, (252, 178, 64)),
+        (0.54, 34, 94, (242, 108, 134)),
     ]
-    for b_idx, (xf, hw, hh, col) in enumerate(boys):
+    for b_idx, (xf, hw, hh, col) in enumerate(toy_boys):
         bx = int(target_w * xf)
         by = ground_y + 6
+
         if scene_idx == 2 and b_idx in (0, 1):
-            by = ground_y - 120 - b_idx * 20
+            by = ground_y - 125 - b_idx * 18
         elif scene_idx == 2 and b_idx == 3:
-            draw.rounded_rectangle([bx - 38, ground_y - 12, bx + 38, ground_y + 8], radius=9, fill=col, outline=(25, 20, 15, 255), width=2)
-            draw.ellipse([bx + 30, ground_y - 22, bx + 56, ground_y + 4], fill=(250, 202, 156, 255), outline=(25, 20, 15, 255), width=2)
+            # Toy boy lying flat on the grass
+            draw.rounded_rectangle([bx - 36, ground_y - 16, bx + 36, ground_y + 8], radius=12, fill=col, outline=(42, 32, 24, 255), width=3)
+            draw.ellipse([bx + 26, ground_y - 34, bx + 62, ground_y + 2], fill=(255, 216, 176, 255), outline=(42, 32, 24, 255), width=3)
+            draw.ellipse([bx + 44, ground_y - 22, bx + 50, ground_y - 16], fill=(32, 32, 38, 255))
             continue
 
-        leg_h = max(24, hh // 3)
-        draw.rectangle([bx - hw + 4, by - leg_h, bx - 3, by], fill=(52, 70, 98, 255))
-        draw.rectangle([bx + 3, by - leg_h, bx + hw - 4, by], fill=(52, 70, 98, 255))
-        draw.rounded_rectangle([bx - hw, by - hh + 26, bx + hw, by - leg_h + 4], radius=12, fill=col, outline=(25, 20, 15, 255), width=2)
-        hr = 20
-        hcy = by - hh + 8
-        draw.ellipse([bx - hr, hcy - hr, bx + hr, hcy + hr], fill=(250, 202, 156, 255), outline=(25, 20, 15, 255), width=2)
-        draw.pieslice([bx - hr, hcy - hr - 3, bx + hr, hcy + 3], start=180, end=360, fill=(82, 48, 26, 255))
-        draw.ellipse([bx - 7, hcy - 3, bx - 2, hcy + 2], fill=(20, 20, 24, 255))
-        draw.ellipse([bx + 2, hcy - 3, bx + 7, hcy + 2], fill=(20, 20, 24, 255))
+        # Stubby toy legs & round shoes
+        draw.rounded_rectangle([bx - hw + 5, by - 28, bx - 4, by], radius=7, fill=(68, 92, 132, 255), outline=(42, 32, 24, 255), width=2)
+        draw.rounded_rectangle([bx + 4, by - 28, bx + hw - 5, by], radius=7, fill=(68, 92, 132, 255), outline=(42, 32, 24, 255), width=2)
+        draw.ellipse([bx - hw + 2, by - 10, bx - 2, by + 6], fill=(56, 62, 78, 255))
+        draw.ellipse([bx + 2, by - 10, bx + hw - 2, by + 6], fill=(56, 62, 78, 255))
 
+        # Round toy torso
+        draw.rounded_rectangle([bx - hw, by - hh + 34, bx + hw, by - 24], radius=18, fill=col, outline=(42, 32, 24, 255), width=3)
+
+        # Big cute toy head, round ears, rosy cheeks, and big eyes
+        hr = 25
+        hcy = by - hh + 14
+        draw.ellipse([bx - hr - 6, hcy - 5, bx - hr + 6, hcy + 8], fill=(255, 216, 176, 255), outline=(42, 32, 24, 255), width=2)
+        draw.ellipse([bx + hr - 6, hcy - 5, bx + hr + 6, hcy + 8], fill=(255, 216, 176, 255), outline=(42, 32, 24, 255), width=2)
+        draw.ellipse([bx - hr, hcy - hr, bx + hr, hcy + hr], fill=(255, 216, 176, 255), outline=(42, 32, 24, 255), width=3)
+        draw.pieslice([bx - hr, hcy - hr - 3, bx + hr, hcy + 4], start=180, end=360, fill=(112, 68, 38, 255))
+
+        # Rosy cheeks & toy eyes
+        draw.ellipse([bx - 16, hcy + 2, bx - 9, hcy + 8], fill=(255, 148, 156, 180))
+        draw.ellipse([bx + 9, hcy + 2, bx + 16, hcy + 8], fill=(255, 148, 156, 180))
+        draw.ellipse([bx - 11, hcy - 5, bx - 3, hcy + 4], fill=(255, 255, 255, 255))
+        draw.ellipse([bx + 3, hcy - 5, bx + 11, hcy + 4], fill=(255, 255, 255, 255))
+        draw.ellipse([bx - 9, hcy - 3, bx - 5, hcy + 2], fill=(26, 26, 32, 255))
+        draw.ellipse([bx + 5, hcy - 3, bx + 9, hcy + 2], fill=(26, 26, 32, 255))
+
+    # Plump toy bear on the right
     bear_x = int(target_w * 0.78)
     bear_y = ground_y + 6
-    draw.ellipse([bear_x - 64, bear_y - 114, bear_x + 64, bear_y - 14], fill=(120, 66, 32, 255), outline=(38, 20, 10, 255), width=3)
-    draw.ellipse([bear_x - 62, bear_y - 134, bear_x + 6, bear_y - 68], fill=(132, 74, 36, 255), outline=(38, 20, 10, 255), width=3)
-    draw.ellipse([bear_x - 66, bear_y - 144, bear_x - 42, bear_y - 120], fill=(106, 56, 26, 255))
-    draw.ellipse([bear_x - 18, bear_y - 144, bear_x + 6, bear_y - 120], fill=(106, 56, 26, 255))
-    draw.ellipse([bear_x - 44, bear_y - 108, bear_x - 34, bear_y - 98], fill=(255, 255, 255, 255))
-    draw.ellipse([bear_x - 41, bear_y - 105, bear_x - 36, bear_y - 100], fill=(18, 18, 22, 255))
+    draw.ellipse([bear_x - 62, bear_y - 104, bear_x + 62, bear_y - 10], fill=(168, 102, 54, 255), outline=(56, 32, 16, 255), width=3)
+    draw.rounded_rectangle([bear_x - 50, bear_y - 34, bear_x - 22, bear_y + 6], radius=10, fill=(152, 90, 46, 255), outline=(56, 32, 16, 255), width=2)
+    draw.rounded_rectangle([bear_x + 22, bear_y - 34, bear_x + 50, bear_y + 6], radius=10, fill=(152, 90, 46, 255), outline=(56, 32, 16, 255), width=2)
+
+    bh_x, bh_y = bear_x - 24, bear_y - 112
+    draw.ellipse([bh_x - 36, bh_y - 24, bh_x - 10, bh_y + 2], fill=(152, 90, 46, 255), outline=(56, 32, 16, 255), width=2)
+    draw.ellipse([bh_x + 10, bh_y - 24, bh_x + 36, bh_y + 2], fill=(152, 90, 46, 255), outline=(56, 32, 16, 255), width=2)
+    draw.ellipse([bh_x - 34, bh_y - 14, bh_x + 34, bh_y + 42], fill=(178, 110, 58, 255), outline=(56, 32, 16, 255), width=3)
+    draw.ellipse([bh_x - 16, bh_y + 8, bh_x + 16, bh_y + 32], fill=(248, 204, 154, 255))
+    draw.ellipse([bh_x - 6, bh_y + 10, bh_x + 6, bh_y + 18], fill=(48, 30, 20, 255))
+    draw.ellipse([bh_x - 16, bh_y - 2, bh_x - 6, bh_y + 8], fill=(255, 255, 255, 255))
+    draw.ellipse([bh_x + 6, bh_y - 2, bh_x + 16, bh_y + 8], fill=(255, 255, 255, 255))
+    draw.ellipse([bh_x - 13, bh_y, bh_x - 9, bh_y + 5], fill=(24, 24, 28, 255))
+    draw.ellipse([bh_x + 9, bh_y, bh_x + 13, bh_y + 5], fill=(24, 24, 28, 255))
 
     return img.convert("RGB")
 
@@ -245,8 +264,9 @@ def generate_scene_image_with_ai(
     scene_idx,
     ref_pil=None,
 ):
-    """Generate realistic or storybook AI scene images via Hugging Face or Gemini."""
+    """Generate cute toy-styled scene images via Hugging Face or Gemini, with toy fallback."""
     errors = []
+    toy_prompt = f"Cute toy figure cartoon style, chunky rounded plastic/vinyl toy characters, bright playful forest toy set. {prompt_text}"
 
     if engine_choice == "Hugging Face (FLUX / SDXL)" and hf_token and hf_token.strip():
         client = InferenceClient(token=hf_token.strip())
@@ -256,7 +276,7 @@ def generate_scene_image_with_ai(
         ]:
             try:
                 pil_img = client.text_to_image(
-                    prompt=prompt_text,
+                    prompt=toy_prompt,
                     model=model_id,
                     width=target_w,
                     height=target_h,
@@ -268,7 +288,7 @@ def generate_scene_image_with_ai(
     if gemini_key and gemini_key.strip():
         try:
             client = genai.Client(api_key=gemini_key.strip())
-            contents = [ref_pil.convert("RGB"), prompt_text] if ref_pil is not None else prompt_text
+            contents = [ref_pil.convert("RGB"), toy_prompt] if ref_pil is not None else toy_prompt
             for model_id in ["gemini-3.1-flash-lite-image", "gemini-3.1-flash-image"]:
                 try:
                     response = client.models.generate_content(
@@ -292,18 +312,18 @@ def generate_scene_image_with_ai(
             errors.append(f"Gemini client: {exc}")
 
     if ref_pil is not None:
-        return modify_reference_into_scene(ref_pil, target_w, target_h, scene_idx, prompt_text), "Reference Frame", errors
+        return modify_reference_into_scene(ref_pil, target_w, target_h, scene_idx, toy_prompt), "Toy Reference Frame", errors
 
-    return make_local_scene_card(target_w, target_h, scene_idx, prompt_text), "Local Fallback", errors
+    return make_local_scene_card(target_w, target_h, scene_idx, toy_prompt), "Toy Scene Fallback", errors
 
 
 st.title("🎬 AI Animated Story Studio")
-st.caption("Generate story scenes, narration, camera motion, and downloadable MP4 videos.")
+st.caption("Generate cute toy-style story scenes, narration, camera motion, and downloadable MP4 videos.")
 
 with st.sidebar:
     st.header("🔑 Studio Settings")
     api_key = st.text_input("Gemini API Key", type="password")
-    hf_token = st.text_input("Hugging Face Token (for FLUX/SDXL)", type="password")
+    hf_token = st.text_input("Hugging Face Token (optional)", type="password")
     image_engine = st.selectbox(
         "Scene Image Model",
         [
@@ -345,11 +365,11 @@ with tab1:
                 "gemini-3.1-flash-lite",
             ]
             prompt = f"""
-            Fix and rewrite this rough story into an engaging {num_scenes}-scene animated short script.
+            Fix and rewrite this rough story into an engaging {num_scenes}-scene toy-animated short script.
             Return ONLY valid JSON as a list of objects, with no markdown formatting.
             Each object must have:
             - "narration": clear, emotional voiceover text (1-2 sentences)
-            - "visual": detailed visual action description for that scene (no character appearance details, just action and background)
+            - "visual": detailed toy-scene visual action description (rounded toy characters and toy forest set)
             Rough story: {rough_story.strip()}
             """
             client = genai.Client(api_key=api_key.strip())
@@ -414,22 +434,21 @@ with tab1:
 
 # --- TAB 2: CHARACTERS & SCENES ---
 with tab2:
-    st.subheader("Generate Scene Artwork")
+    st.subheader("Generate Toy-Style Scene Artwork")
     art_style = st.selectbox(
-        "Choose Visual Style",
+        "Choose Toy Style",
         [
-            "Photorealistic cinematic film still, natural lighting, detailed environment and real human & wildlife proportions",
-            "3D Pixar Disney animation style, expressive characters, rich lighting, detailed forest environment",
-            "2D cartoon vector storybook illustration, clean outlines, expressive characters, vibrant forest",
-            "2D Studio Ghibli anime style, soft watercolor backgrounds, expressive characters",
+            "Cute 3D toy / vinyl figure cartoon style, bright playful forest toy set, rounded toy characters",
+            "Cute 2D toy storybook cartoon style, big round heads, bright pastel & forest toy colors",
+            "Playful miniature toy diorama style, colorful toy trees and cute toy figures",
         ],
     )
     char_desc = st.text_input(
-        "Describe your characters & scene details:",
-        value="Four teenage boys aged 12-15 with distinct builds (one chubby, one lean, two slim) and a massive brown forest bear",
+        "Describe your toy characters & scene details:",
+        value="Four cute toy boys aged 12-15 (chubby toy boy, lean toy boy, two slim toy boys) and a big plump brown toy bear",
     )
     ref_file = st.file_uploader(
-        "Optional: Attach your photo or a reference image to modify into scenes",
+        "Optional: Attach your photo or a reference image to modify into toy scenes",
         type=["png", "jpg", "jpeg", "webp"],
     )
     scene_count_fallback = st.slider("Number of Scenes", 2, 6, 4)
@@ -443,10 +462,10 @@ with tab2:
         active_scenes = st.session_state.scenes
         if not active_scenes:
             default_actions = [
-                "four boys walking together along a forest edge near a rural village in morning sunlight",
-                "a giant brown bear emerging from dense forest trees while the boys react in shock",
-                "two boys climbing tall forest trees while one boy lies still on the ground holding his breath",
-                "the giant brown bear sniffing near the boy on the ground before walking back into the woods",
+                "four toy boys walking together along a bright toy forest path in sunny morning light",
+                "a big plump brown toy bear appearing near the toy trees while the toy boys look surprised",
+                "two toy boys climbing toy trees while one toy boy lies still on the toy grass",
+                "the plump brown toy bear sniffing near the toy boy on the grass before strolling away",
             ]
             active_scenes = [
                 {
@@ -464,7 +483,7 @@ with tab2:
 
         for idx, scene in enumerate(active_scenes):
             full_prompt = (
-                f"{art_style}. Characters: {char_desc}. "
+                f"{art_style}. Toy characters: {char_desc}. "
                 f"Scene {idx + 1}: {scene['visual']}"
             ).strip()
 
@@ -488,7 +507,7 @@ with tab2:
             st.session_state.images.append(img_path)
             progress.progress((idx + 1) / len(active_scenes))
 
-        st.success(f"Generated {len(st.session_state.images)} scenes ({', '.join(set(used_sources))}).")
+        st.success(f"Generated {len(st.session_state.images)} toy scenes ({', '.join(set(used_sources))}).")
         if all_errors:
             with st.expander("Why fallback/reference was used (API details)"):
                 for err in all_errors:
