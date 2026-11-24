@@ -1,6 +1,7 @@
 import asyncio
 import base64
 import json
+import math
 import os
 import tempfile
 import textwrap
@@ -26,14 +27,16 @@ except ModuleNotFoundError:
 st.set_page_config(
     page_title="AI Animated Story Studio",
     page_icon="🎬",
-    layout="centered",
+    layout="wide",
 )
 
 for key, default in [
     ("scenes", []),
     ("images", []),
     ("audio_files", []),
-    ("custom_audio_paths", []),
+    ("locked_character_prompt", "Four teenage boys (12-15 years old, one chubby boy, one lean boy, two slim boys) wearing simple casual clothes, and a large brown forest bear"),
+    ("lock_character_enabled", True),
+    ("kannada_subtitles", {}),
 ]:
     if key not in st.session_state:
         st.session_state[key] = default
@@ -69,6 +72,7 @@ def _find_font(font_size, lang="English"):
     candidates = []
     if lang == "Kannada":
         candidates.extend([
+            "fonts/NotoSansKannada-Regular.ttf",
             "NotoSansKannada-Regular.ttf",
             "NotoSansKannada-Bold.ttf",
             "/tmp/NotoSansKannada-Regular.ttf",
@@ -78,22 +82,23 @@ def _find_font(font_size, lang="English"):
         for path in candidates:
             if os.path.exists(path):
                 try:
-                    return ImageFont.truetype(path, font_size)
+                    return ImageFont.truetype(path, font_size), path
                 except Exception:
                     pass
 
         tmp_font = "/tmp/NotoSansKannada-Regular.ttf"
         font_urls = [
-            "https://raw.githubusercontent.com/google/fonts/main/ofl/notosanskannada/static/NotoSansKannada-Regular.ttf",
+            "https://github.com/google/fonts/raw/main/ofl/notosanskannada/static/NotoSansKannada-Regular.ttf",
+            "https://raw.githubusercontent.com/google/fonts/main/ofl/notosanskannada/NotoSansKannada%5Bwght%5D.ttf",
             "https://raw.githubusercontent.com/notofonts/kannada/main/hinted/ttf/NotoSansKannada-Regular.ttf",
         ]
         for url in font_urls:
             try:
                 r = requests.get(url, timeout=20)
-                if r.ok and len(r.content) > 10000:
+                if r.ok and len(r.content) > 15000:
                     with open(tmp_font, "wb") as f:
                         f.write(r.content)
-                    return ImageFont.truetype(tmp_font, font_size)
+                    return ImageFont.truetype(tmp_font, font_size), tmp_font
             except Exception:
                 continue
 
@@ -106,10 +111,10 @@ def _find_font(font_size, lang="English"):
     for path in candidates:
         if os.path.exists(path):
             try:
-                return ImageFont.truetype(path, font_size)
+                return ImageFont.truetype(path, font_size), path
             except Exception:
                 pass
-    return ImageFont.load_default()
+    return ImageFont.load_default(), "default_bitmap"
 
 
 def translate_lines_to_kannada(gemini_key, lines):
@@ -119,7 +124,7 @@ def translate_lines_to_kannada(gemini_key, lines):
 
     client = genai.Client(api_key=gemini_key.strip())
     prompt = (
-        "Translate each string in this JSON array into natural, easy-to-read Kannada. "
+        "Translate each string in this JSON array into clear, natural, easy-to-read Kannada. "
         "Return ONLY a valid JSON array of strings in the exact same order, with no markdown.\n"
         + json.dumps(lines, ensure_ascii=False)
     )
@@ -139,6 +144,67 @@ def translate_lines_to_kannada(gemini_key, lines):
     return lines
 
 
+def compute_audio_envelope(audio_path, num_steps):
+    """Compute normalized speech energy (0.0 to 1.0) across steps for lip-sync cadence."""
+    if not audio_path or not os.path.exists(audio_path):
+        return [0.45 + 0.35 * abs(math.sin(i * 1.3)) for i in range(num_steps)]
+    try:
+        clip = AudioFileClip(audio_path)
+        try:
+            dur = max(float(clip.duration or 1.0), 0.2)
+            samples = clip.to_soundarray(fps=4000)
+            if samples is None or len(samples) == 0:
+                raise ValueError("Empty audio samples")
+            mono = np.mean(np.abs(samples), axis=1) if samples.ndim > 1 else np.abs(samples)
+            peak = float(np.max(mono)) if len(mono) > 0 else 0.0
+            if peak <= 1e-6:
+                return [0.15] * num_steps
+
+            env = []
+            chunk_len = max(1, len(mono) // num_steps)
+            for idx in range(num_steps):
+                start = idx * chunk_len
+                end = len(mono) if idx == num_steps - 1 else min(len(mono), (idx + 1) * chunk_len)
+                seg_rms = float(np.sqrt(np.mean(mono[start:end] ** 2))) if end > start else 0.0
+                norm_val = min(1.0, max(0.08, (seg_rms / peak) * 1.45))
+                env.append(norm_val)
+            return env
+        finally:
+            clip.close()
+    except Exception:
+        return [0.35 + 0.45 * abs(math.sin(i * 1.2)) for i in range(num_steps)]
+
+
+def draw_lipsync_indicator(frame_pil, speech_energy, target_w, target_h, enable_lipsync=True):
+    """Draw a subtle animated mouth/lip-sync pulse indicator synced to voiceover energy."""
+    if not enable_lipsync:
+        return frame_pil
+
+    img_rgba = frame_pil.convert("RGBA")
+    draw = ImageDraw.Draw(img_rgba)
+
+    mouth_open = max(2, int(round(4 + speech_energy * 14)))
+    mouth_w = max(18, int(round(24 + speech_energy * 12)))
+    cx = target_w // 2
+    cy = int(round(target_h * 0.74))
+
+    # Subtle lower-third speech/lip-sync cue badge
+    badge_w = mouth_w + 26
+    badge_h = max(26, mouth_open + 16)
+    draw.rounded_rectangle(
+        [cx - badge_w // 2, cy - badge_h // 2, cx + badge_w // 2, cy + badge_h // 2],
+        radius=badge_h // 2,
+        fill=(15, 20, 30, 145),
+        outline=(255, 210, 120, 180),
+        width=1,
+    )
+    draw.ellipse(
+        [cx - mouth_w // 2, cy - mouth_open // 2, cx + mouth_w // 2, cy + mouth_open // 2],
+        fill=(220, 85, 95, 225) if speech_energy > 0.22 else (140, 95, 100, 170),
+    )
+    return img_rgba.convert("RGB")
+
+
 def draw_subtitle_on_frame(frame_pil, subtitle_text, target_w, target_h, lang="English"):
     """Draw a clean subtitle banner near the bottom of a scene frame."""
     if not subtitle_text or not subtitle_text.strip() or lang == "None":
@@ -147,24 +213,24 @@ def draw_subtitle_on_frame(frame_pil, subtitle_text, target_w, target_h, lang="E
     img_rgba = frame_pil.convert("RGBA")
     draw = ImageDraw.Draw(img_rgba)
 
-    font_size = max(22, int(round(target_w * 0.036)))
-    font = _find_font(font_size, lang=lang)
+    font_size = max(24, int(round(target_w * 0.038)))
+    font, _ = _find_font(font_size, lang=lang)
 
-    chars_per_line = max(18, int(target_w / max(10, font_size * 0.58)))
+    chars_per_line = max(16, int(target_w / max(11, font_size * 0.62)))
     wrapped_lines = textwrap.wrap(subtitle_text.strip(), width=chars_per_line)[:3]
     if not wrapped_lines:
         return frame_pil
 
-    line_h = font_size + 8
+    line_h = font_size + 10
     box_h = len(wrapped_lines) * line_h + 24
     pad_x = max(20, int(target_w * 0.04))
-    box_top = max(16, target_h - box_h - max(36, int(target_h * 0.06)))
+    box_top = max(16, target_h - box_h - max(42, int(target_h * 0.07)))
     box_bot = min(target_h - 16, box_top + box_h)
 
     draw.rounded_rectangle(
         [pad_x, box_top, target_w - pad_x, box_bot],
         radius=14,
-        fill=(10, 14, 22, 195),
+        fill=(10, 14, 22, 205),
     )
 
     cur_y = box_top + 12
@@ -172,7 +238,7 @@ def draw_subtitle_on_frame(frame_pil, subtitle_text, target_w, target_h, lang="E
         bbox = draw.textbbox((0, 0), line, font=font)
         text_w = bbox[2] - bbox[0]
         text_x = max(pad_x + 12, (target_w - text_w) // 2)
-        draw.text((text_x + 2, cur_y + 2), line, font=font, fill=(0, 0, 0, 220))
+        draw.text((text_x + 2, cur_y + 2), line, font=font, fill=(0, 0, 0, 230))
         draw.text((text_x, cur_y), line, font=font, fill=(255, 248, 214, 255))
         cur_y += line_h
 
@@ -188,13 +254,16 @@ def build_motion_clip(
     scene_idx=0,
     subtitle_text="",
     subtitle_lang="None",
+    audio_path=None,
+    enable_lipsync=True,
+    enable_char_motion=True,
 ):
-    """Create a smooth zoom/pan video segment with optional English or Kannada subtitles."""
+    """Create animated scene frames with camera motion, character movement, lip-sync, and subtitles."""
     resampling = getattr(Image, "Resampling", Image).LANCZOS
     modes = ["Zoom In", "Pan Right", "Zoom Out", "Pan Left"]
     active_mode = modes[scene_idx % len(modes)] if motion_mode == "Auto Alternate" else motion_mode
 
-    overscan = 1.16
+    overscan = 1.18
     canvas_w = int(round(target_w * overscan))
     canvas_h = int(round(target_h * overscan))
 
@@ -212,8 +281,9 @@ def build_motion_clip(
         )
 
     safe_dur = max(float(duration), 0.5)
-    num_steps = max(4, min(16, int(round(safe_dur * 3))))
+    num_steps = max(6, min(20, int(round(safe_dur * 4))))
     step_dur = safe_dur / num_steps
+    speech_env = compute_audio_envelope(audio_path, num_steps)
     subclips = []
 
     os.makedirs("motion_frames", exist_ok=True)
@@ -221,30 +291,34 @@ def build_motion_clip(
         progress = s_idx / max(1, num_steps - 1)
         ease = progress * progress * (3.0 - 2.0 * progress)
 
+        # Character breathing & micro-sway offset
+        char_sway_x = int(round(math.sin(s_idx * 1.1 + scene_idx) * 8)) if enable_char_motion else 0
+        char_bob_y = int(round(abs(math.cos(s_idx * 1.4 + scene_idx)) * 7)) if enable_char_motion else 0
+
         if active_mode == "Zoom In":
-            scale = 1.0 + 0.13 * ease
+            scale = 1.0 + 0.14 * ease
             win_w = max(2, int(round(target_w / scale)))
             win_h = max(2, int(round(target_h / scale)))
-            x0 = (canvas_w - win_w) // 2
-            y0 = (canvas_h - win_h) // 2
+            x0 = (canvas_w - win_w) // 2 + char_sway_x
+            y0 = (canvas_h - win_h) // 2 + char_bob_y
         elif active_mode == "Zoom Out":
-            scale = 1.13 - 0.13 * ease
+            scale = 1.14 - 0.14 * ease
             win_w = max(2, int(round(target_w / scale)))
             win_h = max(2, int(round(target_h / scale)))
-            x0 = (canvas_w - win_w) // 2
-            y0 = (canvas_h - win_h) // 2
+            x0 = (canvas_w - win_w) // 2 + char_sway_x
+            y0 = (canvas_h - win_h) // 2 + char_bob_y
         elif active_mode == "Pan Right":
             win_w = target_w
             win_h = target_h
             max_x = max(0, canvas_w - win_w)
-            x0 = int(round(max_x * ease))
-            y0 = max(0, (canvas_h - win_h) // 2)
+            x0 = int(round(max_x * ease)) + char_sway_x
+            y0 = max(0, (canvas_h - win_h) // 2) + char_bob_y
         else:
             win_w = target_w
             win_h = target_h
             max_x = max(0, canvas_w - win_w)
-            x0 = int(round(max_x * (1.0 - ease)))
-            y0 = max(0, (canvas_h - win_h) // 2)
+            x0 = int(round(max_x * (1.0 - ease))) + char_sway_x
+            y0 = max(0, (canvas_h - win_h) // 2) + char_bob_y
 
         x0 = min(max(0, x0), max(0, canvas_w - win_w))
         y0 = min(max(0, y0), max(0, canvas_h - win_h))
@@ -253,6 +327,15 @@ def build_motion_clip(
         frame_pil = Image.fromarray(cropped)
         if win_w != target_w or win_h != target_h:
             frame_pil = frame_pil.resize((target_w, target_h), resampling)
+
+        if enable_lipsync:
+            frame_pil = draw_lipsync_indicator(
+                frame_pil,
+                speech_energy=speech_env[s_idx],
+                target_w=target_w,
+                target_h=target_h,
+                enable_lipsync=enable_lipsync,
+            )
 
         if subtitle_lang != "None" and subtitle_text:
             frame_pil = draw_subtitle_on_frame(
@@ -417,11 +500,11 @@ def generate_real_ai_scene(
 
 
 st.title("🎬 AI Animated Story Studio")
-st.caption("Connect free AI image models, narration, camera motion, and MP4 export.")
+st.caption("Locked character prompts, character reference upload, interactive editing area, voiceovers, character motion & lip-sync, and MP4 export.")
 
 with st.sidebar:
     st.header("🔑 Studio Settings")
-    api_key = st.text_input("Gemini API Key (for Script Polishing)", type="password")
+    api_key = st.text_input("Gemini API Key (for Script Polishing & Kannada)", type="password")
     image_engine = st.selectbox(
         "AI Scene Image Engine",
         [
@@ -439,20 +522,32 @@ with st.sidebar:
     else:
         width, height, ratio_str = 1280, 720, "16:9"
 
+    st.divider()
+    st.subheader("🔒 Locked Character Identity")
+    st.session_state.lock_character_enabled = st.checkbox(
+        "Keep character prompt locked across scenes",
+        value=st.session_state.lock_character_enabled,
+    )
+    st.session_state.locked_character_prompt = st.text_area(
+        "Locked Character Prompt",
+        value=st.session_state.locked_character_prompt,
+        height=95,
+    )
+
 tab1, tab2, tab3, tab4 = st.tabs([
-    "1️⃣ Rough Story",
+    "1️⃣ Rough Story & Editor",
     "2️⃣ Characters & Scenes",
     "3️⃣ Voice & Sound",
-    "4️⃣ Download Video",
+    "4️⃣ Render & Download",
 ])
 
-# --- TAB 1: SCRIPT WRITER ---
+# --- TAB 1: SCRIPT WRITER & INTERACTIVE EDITING AREA ---
 with tab1:
-    st.subheader("Write Your Rough Idea")
+    st.subheader("Write Your Rough Idea & Edit Scenes")
     rough_story = st.text_area(
         "Type your rough story in any style (even broken sentences):",
         placeholder="e.g., 4 hostel boys walk near a forest village, a giant bear appears, two climb a tree, one lies still holding breath, and learns who a true friend is.",
-        height=140,
+        height=120,
     )
     num_scenes = st.slider("Number of Scenes", 3, 6, 4)
 
@@ -466,8 +561,13 @@ with tab1:
                 "gemini-3.5-flash-lite",
                 "gemini-3.1-flash-lite",
             ]
+            char_context = (
+                f"\nConsistent character description to keep across scenes: {st.session_state.locked_character_prompt}"
+                if st.session_state.lock_character_enabled
+                else ""
+            )
             prompt = f"""
-            Fix and rewrite this rough story into an engaging {num_scenes}-scene story script.
+            Fix and rewrite this rough story into an engaging {num_scenes}-scene story script.{char_context}
             Return ONLY valid JSON as a list of objects, with no markdown formatting.
             Each object must have:
             - "narration": clear, emotional voiceover text (1-2 sentences)
@@ -516,27 +616,40 @@ with tab1:
                     }
                     for item in parsed_scenes
                 ]
-                st.success("Script ready! Review below or move to Tab 2.")
+                st.session_state.kannada_subtitles = {}
+                st.success("Script ready! Edit any scene below or move to Tab 2.")
             else:
                 st.error(f"Could not generate script after retries/fallbacks: {last_exc}")
 
     if st.session_state.scenes:
+        st.markdown("### ✏️ Interactive Scene & Subtitle Editing Area")
         for i, scene in enumerate(st.session_state.scenes):
-            with st.expander(f"Scene {i + 1}", expanded=True):
-                scene["narration"] = st.text_area(
-                    f"Narration {i + 1}",
-                    value=scene["narration"],
-                    key=f"nar_{i}",
-                )
-                scene["visual"] = st.text_input(
-                    f"Visual Action {i + 1}",
-                    value=scene["visual"],
-                    key=f"vis_{i}",
-                )
+            with st.expander(f"Scene {i + 1} Editor", expanded=True):
+                col_a, col_b = st.columns(2)
+                with col_a:
+                    scene["narration"] = st.text_area(
+                        f"Scene {i + 1} Narration (English / Voiceover)",
+                        value=scene["narration"],
+                        key=f"nar_{i}",
+                    )
+                    scene["visual"] = st.text_input(
+                        f"Scene {i + 1} Action / Camera Visual",
+                        value=scene["visual"],
+                        key=f"vis_{i}",
+                    )
+                with col_b:
+                    kn_default = st.session_state.kannada_subtitles.get(i, "")
+                    kn_edited = st.text_area(
+                        f"Scene {i + 1} Kannada Subtitle Override (optional)",
+                        value=kn_default,
+                        placeholder="Leave blank to auto-translate narration to Kannada when rendering",
+                        key=f"kn_sub_{i}",
+                    )
+                    st.session_state.kannada_subtitles[i] = kn_edited
 
-# --- TAB 2: REALISTIC AI CHARACTERS & SCENES ---
+# --- TAB 2: CHARACTER REFERENCE & REALISTIC AI SCENES ---
 with tab2:
-    st.subheader("Generate Realistic AI Scene Artwork")
+    st.subheader("Character Reference Upload & Scene Generation")
     art_style = st.selectbox(
         "Choose Visual Style",
         [
@@ -545,20 +658,27 @@ with tab2:
             "Detailed storybook illustration, expressive characters, lush forest scenery",
         ],
     )
-    char_desc = st.text_input(
-        "Describe your characters & scene details:",
-        value="Four teenage boys (12-15 years old, one chubby boy, one lean boy, two slim boys) and a large brown forest bear",
-    )
-    ref_file = st.file_uploader(
-        "Optional: Attach your photo or a reference image to modify into scenes",
-        type=["png", "jpg", "jpeg", "webp"],
-    )
+
+    ref_col1, ref_col2 = st.columns([1.4, 1])
+    with ref_col1:
+        active_char_prompt = st.text_input(
+            "Active Character Prompt (Synced with Locked Character Prompt)",
+            value=st.session_state.locked_character_prompt,
+        )
+        if st.session_state.lock_character_enabled:
+            st.session_state.locked_character_prompt = active_char_prompt
+    with ref_col2:
+        ref_file = st.file_uploader(
+            "Character Reference Image (Optional)",
+            type=["png", "jpg", "jpeg", "webp"],
+        )
+
     scene_count_fallback = st.slider("Number of Scenes", 2, 6, 4)
 
     ref_pil = None
     if ref_file is not None:
         ref_pil = Image.open(ref_file).convert("RGB")
-        st.image(ref_pil, caption="Uploaded Reference Image", use_container_width=True)
+        st.image(ref_pil, caption="Uploaded Character Reference Image", width=260)
 
     if st.button("🎨 Generate Scene Artwork", type="primary"):
         active_scenes = st.session_state.scenes
@@ -578,6 +698,12 @@ with tab2:
             ]
             st.session_state.scenes = active_scenes
 
+        char_to_use = (
+            st.session_state.locked_character_prompt
+            if st.session_state.lock_character_enabled
+            else active_char_prompt
+        )
+
         st.session_state.images = []
         progress = st.progress(0)
         used_sources = []
@@ -585,7 +711,7 @@ with tab2:
 
         for idx, scene in enumerate(active_scenes):
             full_prompt = (
-                f"{art_style}. Characters: {char_desc}. "
+                f"{art_style}. Locked Characters: {char_to_use}. "
                 f"Scene {idx + 1}: {scene['visual']}"
             ).strip()
 
@@ -633,7 +759,7 @@ with tab2:
 
 # --- TAB 3: VOICE & SOUND ---
 with tab3:
-    st.subheader("Select Narrator Voice")
+    st.subheader("Select Narrator Voice (English, Kannada Male/Female, or Your Own Voice)")
     voice_map = {
         "Warm Male Storyteller (US)": ("en-US-ChristopherNeural", "English"),
         "Expressive Female Storyteller (US)": ("en-US-AriaNeural", "English"),
@@ -675,12 +801,20 @@ with tab3:
                         for idx, s in enumerate(st.session_state.scenes)
                     ]
                     spoken_lines = raw_lines
-                    if voice_lang == "Kannada" and api_key and api_key.strip():
-                        with st.spinner("Translating scene narration to Kannada & generating voiceovers..."):
-                            spoken_lines = translate_lines_to_kannada(api_key, raw_lines)
-                    else:
-                        with st.spinner("Generating voiceovers..."):
-                            pass
+                    if voice_lang == "Kannada":
+                        custom_kn = [
+                            st.session_state.kannada_subtitles.get(i, "").strip()
+                            for i in range(len(raw_lines))
+                        ]
+                        if all(custom_kn):
+                            spoken_lines = custom_kn
+                        elif api_key and api_key.strip():
+                            with st.spinner("Translating scene narration to Kannada & generating voiceovers..."):
+                                translated = translate_lines_to_kannada(api_key, raw_lines)
+                                spoken_lines = [
+                                    custom_kn[i] if custom_kn[i] else translated[i]
+                                    for i in range(len(raw_lines))
+                                ]
 
                     st.session_state.audio_files = []
                     progress = st.progress(0)
@@ -746,16 +880,27 @@ with tab3:
 
 # --- TAB 4: RENDER & DOWNLOAD ---
 with tab4:
-    st.subheader("Assemble & Download Final Movie")
-    free_motion_style = st.selectbox(
-        "Camera Motion",
-        ["Auto Alternate", "Zoom In", "Zoom Out", "Pan Right", "Pan Left"],
-    )
-    subtitle_lang = st.selectbox(
-        "Subtitles Language",
-        ["None", "English", "Kannada"],
-        index=1,
-    )
+    st.subheader("Character Animation, Lip-Sync, Subtitles & MP4 Export")
+    c1, c2, c3, c4 = st.columns(4)
+    with c1:
+        free_motion_style = st.selectbox(
+            "Camera Motion",
+            ["Auto Alternate", "Zoom In", "Zoom Out", "Pan Right", "Pan Left"],
+        )
+    with c2:
+        subtitle_lang = st.selectbox(
+            "Subtitles Language",
+            ["None", "English", "Kannada"],
+            index=2,
+        )
+    with c3:
+        enable_char_motion = st.checkbox("Character Movement", value=True)
+    with c4:
+        enable_lipsync = st.checkbox("Voice Lip-Sync Cadence", value=True)
+
+    _, active_font_source = _find_font(28, lang=subtitle_lang if subtitle_lang != "None" else "English")
+    if subtitle_lang == "Kannada":
+        st.caption(f"Kannada font status: `{active_font_source}`")
 
     if st.button("🎬 Render Final MP4 Video", type="primary"):
         if not st.session_state.images or not st.session_state.audio_files:
@@ -767,7 +912,7 @@ with tab4:
             output_file = "animated_story.mp4"
 
             try:
-                with st.spinner("Preparing subtitles, camera motion, and exporting MP4..."):
+                with st.spinner("Animating characters, syncing speech cadence, rendering subtitles, and exporting MP4..."):
                     raw_lines = [
                         (s.get("narration") or f"Scene {idx + 1}").strip()
                         for idx, s in enumerate(st.session_state.scenes)
@@ -776,13 +921,25 @@ with tab4:
                         raw_lines.append(f"Scene {len(raw_lines) + 1}")
 
                     if subtitle_lang == "Kannada":
+                        custom_kn = [
+                            st.session_state.kannada_subtitles.get(i, "").strip()
+                            for i in range(len(raw_lines))
+                        ]
                         if api_key and api_key.strip():
-                            sub_lines = translate_lines_to_kannada(api_key, raw_lines)
+                            translated = translate_lines_to_kannada(api_key, raw_lines)
+                            sub_lines = [
+                                custom_kn[i] if custom_kn[i] else translated[i]
+                                for i in range(len(raw_lines))
+                            ]
                         else:
-                            st.warning(
-                                "Enter a Gemini API Key in the sidebar to auto-translate English narrations into Kannada; using existing narration text as-is."
-                            )
-                            sub_lines = raw_lines
+                            sub_lines = [
+                                custom_kn[i] if custom_kn[i] else raw_lines[i]
+                                for i in range(len(raw_lines))
+                            ]
+                            if not any(custom_kn):
+                                st.warning(
+                                    "Add a Gemini API Key in the sidebar or enter Kannada text in Tab 1's Scene Editor for Kannada subtitles."
+                                )
                     elif subtitle_lang == "English":
                         sub_lines = raw_lines
                     else:
@@ -804,6 +961,9 @@ with tab4:
                             scene_idx=i,
                             subtitle_text=sub_lines[i] if i < len(sub_lines) else "",
                             subtitle_lang=subtitle_lang,
+                            audio_path=aud_p,
+                            enable_lipsync=enable_lipsync,
+                            enable_char_motion=enable_char_motion,
                         )
                         scene_clip = apply_audio(motion_clip, audio_clip)
                         clips.append(scene_clip)
