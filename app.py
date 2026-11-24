@@ -135,7 +135,12 @@ def translate_lines_to_kannada(gemini_key, lines):
         "Return ONLY a valid JSON array of strings in the exact same order, with no markdown.\n"
         + json.dumps(lines, ensure_ascii=False)
     )
-    for model_name in ["gemini-3.5-flash-lite", "gemini-3.1-flash-lite", "gemini-3.6-flash"]:
+    for model_name in [
+        "gemini-3.8-flash",
+        "gemini-3.6-flash",
+        "gemini-3.5-flash-lite",
+        "gemini-3.1-flash-lite",
+    ]:
         try:
             resp = client.models.generate_content(model=model_name, contents=prompt)
             raw = (resp.text or "").strip()
@@ -648,40 +653,76 @@ with tab1:
                     }
                     for item in parsed_scenes
                 ]
-                st.session_state.kannada_subtitles = {
-                    idx: sc["kannada_narration"]
-                    for idx, sc in enumerate(st.session_state.scenes)
-                    if sc["kannada_narration"]
-                }
+                for idx, sc in enumerate(st.session_state.scenes):
+                    st.session_state[f"nar_{idx}"] = sc["narration"]
+                    st.session_state[f"kn_script_{idx}"] = sc["kannada_narration"]
+                    st.session_state[f"vis_{idx}"] = sc["visual"]
+                    st.session_state.kannada_subtitles[idx] = sc["kannada_narration"]
                 st.success("English & Kannada scripts ready! Edit any scene below or move to Tab 2.")
             else:
                 st.error(f"Could not generate script after retries/fallbacks: {last_exc}")
 
     if st.session_state.scenes:
         st.markdown("### ✏️ Interactive Story Editor (English Script, Kannada Script & Visuals)")
+        top_tr_col1, top_tr_col2 = st.columns([1.4, 2.6])
+        with top_tr_col1:
+            if st.button("🌐 Auto-Translate All Scenes to Kannada"):
+                if not api_key or not api_key.strip():
+                    st.error("Enter your Gemini API Key in the sidebar to auto-translate to Kannada.")
+                else:
+                    en_list = [
+                        (st.session_state.get(f"nar_{i}", sc.get("narration", "")) or f"Scene {i + 1}.").strip()
+                        for i, sc in enumerate(st.session_state.scenes)
+                    ]
+                    with st.spinner("Translating all scenes to Kannada..."):
+                        kn_list = translate_lines_to_kannada(api_key, en_list)
+                    for i, kn_val in enumerate(kn_list):
+                        st.session_state.scenes[i]["kannada_narration"] = kn_val
+                        st.session_state[f"kn_script_{i}"] = kn_val
+                        st.session_state.kannada_subtitles[i] = kn_val
+                    st.success("Translated all scenes into Kannada! Review or edit each box below.")
+                    st.rerun()
+
         for i, scene in enumerate(st.session_state.scenes):
             with st.expander(f"Scene {i + 1} Editor", expanded=True):
                 col_a, col_b = st.columns(2)
                 with col_a:
-                    scene["narration"] = st.text_area(
+                    nar_val = st.text_area(
                         f"Scene {i + 1} English Script / Narration",
                         value=scene.get("narration", ""),
                         key=f"nar_{i}",
                     )
-                    scene["visual"] = st.text_input(
+                    scene["narration"] = nar_val
+                    vis_val = st.text_input(
                         f"Scene {i + 1} Action / Camera Visual",
                         value=scene.get("visual", ""),
                         key=f"vis_{i}",
                     )
+                    scene["visual"] = vis_val
                 with col_b:
                     kn_script_val = st.text_area(
                         f"Scene {i + 1} Kannada Script (ಕನ್ನಡ ಕಥೆ)",
                         value=scene.get("kannada_narration", ""),
-                        placeholder="Enter or edit Kannada script for Scene %d" % (i + 1),
+                        placeholder=f"Enter or edit Kannada script for Scene {i + 1}",
                         key=f"kn_script_{i}",
                     )
                     scene["kannada_narration"] = kn_script_val
                     st.session_state.kannada_subtitles[i] = kn_script_val
+
+                    if st.button(f"🌐 Auto-Translate Scene {i + 1} to Kannada", key=f"tr_scene_{i}"):
+                        if not api_key or not api_key.strip():
+                            st.error("Enter your Gemini API Key in the sidebar to translate this scene.")
+                        elif not nar_val.strip():
+                            st.warning("Write or keep English narration in Scene %d first." % (i + 1))
+                        else:
+                            with st.spinner(f"Translating Scene {i + 1} to Kannada..."):
+                                translated_one = translate_lines_to_kannada(api_key, [nar_val.strip()])
+                            kn_one = translated_one[0] if translated_one else ""
+                            if kn_one:
+                                scene["kannada_narration"] = kn_one
+                                st.session_state[f"kn_script_{i}"] = kn_one
+                                st.session_state.kannada_subtitles[i] = kn_one
+                                st.rerun()
 
 # --- TAB 2: CHARACTER REFERENCE & REALISTIC AI SCENES ---
 with tab2:
