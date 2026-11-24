@@ -312,65 +312,6 @@ def get_script_lines_for_language(scenes, script_lang="English", gemini_key=""):
     ]
 
 
-def compute_audio_envelope(audio_path, num_steps):
-    """Compute normalized speech energy (0.0 to 1.0) across steps for lip-sync cadence."""
-    if not audio_path or not os.path.exists(audio_path):
-        return [0.45 + 0.35 * abs(math.sin(i * 1.3)) for i in range(num_steps)]
-    try:
-        clip = AudioFileClip(audio_path)
-        try:
-            samples = clip.to_soundarray(fps=4000)
-            if samples is None or len(samples) == 0:
-                raise ValueError("Empty audio samples")
-            mono = np.mean(np.abs(samples), axis=1) if samples.ndim > 1 else np.abs(samples)
-            peak = float(np.max(mono)) if len(mono) > 0 else 0.0
-            if peak <= 1e-6:
-                return [0.15] * num_steps
-
-            env = []
-            chunk_len = max(1, len(mono) // num_steps)
-            for idx in range(num_steps):
-                start = idx * chunk_len
-                end = len(mono) if idx == num_steps - 1 else min(len(mono), (idx + 1) * chunk_len)
-                seg_rms = float(np.sqrt(np.mean(mono[start:end] ** 2))) if end > start else 0.0
-                norm_val = min(1.0, max(0.08, (seg_rms / peak) * 1.45))
-                env.append(norm_val)
-            return env
-        finally:
-            clip.close()
-    except Exception:
-        return [0.35 + 0.45 * abs(math.sin(i * 1.2)) for i in range(num_steps)]
-
-
-def draw_lipsync_indicator(frame_pil, speech_energy, target_w, target_h, enable_lipsync=True):
-    """Draw a subtle animated mouth/lip-sync pulse indicator synced to voiceover energy."""
-    if not enable_lipsync:
-        return frame_pil
-
-    img_rgba = frame_pil.convert("RGBA")
-    draw = ImageDraw.Draw(img_rgba)
-
-    mouth_open = max(2, int(round(4 + speech_energy * 14)))
-    mouth_w = max(18, int(round(24 + speech_energy * 12)))
-    cx = target_w // 2
-    cy = int(round(target_h * 0.72))
-
-    badge_w = mouth_w + 26
-    badge_h = max(26, mouth_open + 16)
-    draw.rounded_rectangle(
-        [cx - badge_w // 2, cy - badge_h // 2, cx + badge_w // 2, cy + badge_h // 2],
-        radius=badge_h // 2,
-        fill=(15, 20, 30, 145),
-        outline=(255, 210, 120, 180),
-        width=1,
-    )
-    draw.ellipse(
-        [cx - mouth_w // 2, cy - mouth_open // 2, cx + mouth_w // 2, cy + mouth_open // 2],
-        fill=(220, 85, 95, 225) if speech_energy > 0.22 else (140, 95, 100, 170),
-    )
-    return img_rgba.convert("RGB")
-
-
 def draw_subtitle_on_frame(frame_pil, subtitle_text, target_w, target_h, lang="English"):
     """Draw a clean subtitle banner near the bottom of a scene frame with Kannada font support."""
     if not subtitle_text or not subtitle_text.strip() or lang == "None":
@@ -431,8 +372,6 @@ def build_motion_clip(
     scene_idx=0,
     subtitle_text="",
     subtitle_lang="None",
-    audio_path=None,
-    enable_lipsync=True,
     enable_char_motion=True,
 ):
     """Create animated scene frames with exact target_w x target_h dimensions."""
@@ -451,7 +390,6 @@ def build_motion_clip(
     safe_dur = max(float(duration), 0.5)
     num_steps = max(6, min(20, int(round(safe_dur * 4))))
     step_dur = safe_dur / num_steps
-    speech_env = compute_audio_envelope(audio_path, num_steps)
     subclips = []
 
     os.makedirs("motion_frames", exist_ok=True)
@@ -495,15 +433,6 @@ def build_motion_clip(
         if frame_pil.size != (target_w, target_h):
             frame_pil = frame_pil.resize((target_w, target_h), resampling)
 
-        if enable_lipsync:
-            frame_pil = draw_lipsync_indicator(
-                frame_pil,
-                speech_energy=speech_env[s_idx],
-                target_w=target_w,
-                target_h=target_h,
-                enable_lipsync=enable_lipsync,
-            )
-
         if subtitle_lang != "None" and subtitle_text:
             frame_pil = draw_subtitle_on_frame(
                 frame_pil,
@@ -531,8 +460,6 @@ def render_single_scene_video(
     scene_idx=0,
     subtitle_text="",
     subtitle_lang="None",
-    audio_path=None,
-    enable_lipsync=True,
     enable_char_motion=True,
 ):
     """Render and save a standalone MP4 video clip for a single scene."""
@@ -545,8 +472,6 @@ def render_single_scene_video(
         scene_idx=scene_idx,
         subtitle_text=subtitle_text,
         subtitle_lang=subtitle_lang,
-        audio_path=audio_path,
-        enable_lipsync=enable_lipsync,
         enable_char_motion=enable_char_motion,
     )
     try:
@@ -915,7 +840,7 @@ def generate_real_ai_scene(
 
 st.title("🎬 AI Animated Story Studio")
 st.caption(
-    "Up to 10 scenes, multi-engine AI scene failover, local bypass fallback, locked character identity, interactive English & Kannada story editor, per-scene video creation with subtitles & lip-sync, voiceovers, and exact-size MP4 export."
+    "Up to 10 scenes, multi-engine AI scene failover, local bypass fallback, locked character identity, interactive English & Kannada story editor, per-scene video creation with subtitles, voiceovers, and exact-size MP4 export."
 )
 
 with st.sidebar:
@@ -1142,9 +1067,9 @@ with tab1:
                                 st.session_state.kannada_subtitles[i] = kn_one
                                 st.rerun()
 
-# --- TAB 2: SCENE-WISE VIDEO CREATOR (WITH SUBTITLES & LIP-SYNC) ---
+# --- TAB 2: SCENE-WISE VIDEO CREATOR ---
 with tab2:
-    st.subheader("Create Scene-by-Scene Videos (Subtitles & Lip-Sync)")
+    st.subheader("Create Scene-by-Scene Videos")
     art_style = st.selectbox(
         "Choose Visual Style",
         [
@@ -1185,21 +1110,15 @@ with tab2:
             ["Auto Alternate", "Zoom In", "Zoom Out", "Pan Right", "Pan Left"],
         )
 
-    sub_lip_col1, sub_lip_col2, sub_lip_col3 = st.columns([1.2, 1.1, 1.7])
-    with sub_lip_col1:
+    sub_col1, sub_col2 = st.columns([1.3, 2.7])
+    with sub_col1:
         tab2_sub_lang = st.selectbox(
             "Scene Video Subtitles",
             ["None", "English", "Kannada"],
             index=2,
             key="tab2_subtitle_lang",
         )
-    with sub_lip_col2:
-        tab2_lipsync = st.checkbox(
-            "Scene Lip-Sync Cadence",
-            value=True,
-            key="tab2_enable_lipsync",
-        )
-    with sub_lip_col3:
+    with sub_col2:
         allow_local_bypass = st.checkbox(
             "Enable zero-API local bypass frames if all external image APIs fail/quota-out",
             value=True,
@@ -1331,8 +1250,6 @@ with tab2:
                     scene_idx=idx,
                     subtitle_text=sub_line,
                     subtitle_lang=tab2_sub_lang,
-                    audio_path=scene_aud,
-                    enable_lipsync=tab2_lipsync,
                     enable_char_motion=True,
                 )
                 st.session_state.scene_videos.append(vid_path)
@@ -1342,7 +1259,7 @@ with tab2:
         if st.session_state.scene_videos:
             st.success(
                 f"Created {len(st.session_state.scene_videos)} scene videos at {width}x{height} "
-                f"(Subtitles: {tab2_sub_lang}, Lip-Sync: {'On' if tab2_lipsync else 'Off'}, Sources: {', '.join(set(used_sources))})."
+                f"(Subtitles: {tab2_sub_lang}, Sources: {', '.join(set(used_sources))})."
             )
         else:
             st.error(
@@ -1625,8 +1542,8 @@ with tab3:
 
 # --- TAB 4: RENDER & DOWNLOAD ---
 with tab4:
-    st.subheader("Character Animation, Lip-Sync, Subtitles & Exact-Size MP4 Export")
-    c1, c2, c3, c4 = st.columns(4)
+    st.subheader("Character Animation, Subtitles & Exact-Size MP4 Export")
+    c1, c2, c3 = st.columns(3)
     with c1:
         free_motion_style = st.selectbox(
             "Camera Motion",
@@ -1640,8 +1557,6 @@ with tab4:
         )
     with c3:
         enable_char_motion = st.checkbox("Character Movement", value=True)
-    with c4:
-        enable_lipsync = st.checkbox("Voice Lip-Sync Cadence", value=True)
 
     _, active_font_source = _find_font(28, lang=subtitle_lang if subtitle_lang != "None" else "English")
     st.caption(
@@ -1706,8 +1621,6 @@ with tab4:
                                 scene_idx=i,
                                 subtitle_text=sub_lines[i] if i < len(sub_lines) else "",
                                 subtitle_lang=subtitle_lang,
-                                audio_path=aud_p,
-                                enable_lipsync=enable_lipsync,
                                 enable_char_motion=enable_char_motion,
                             )
 
