@@ -2,7 +2,7 @@ import asyncio
 import json
 import os
 import tempfile
-import urllib.parse
+import time
 from io import BytesIO
 
 import edge_tts
@@ -10,6 +10,8 @@ import fal_client
 import requests
 import streamlit as st
 from google import genai
+from google.genai import types
+from huggingface_hub import InferenceClient
 from PIL import Image
 
 try:
@@ -77,7 +79,7 @@ def apply_subclip(clip, start_t, end_t):
 
 
 def fit_image_to_frame(img_path, target_w, target_h):
-    """Resize and pad/crop an image cleanly to exact (target_w, target_h) using Pillow."""
+    """Resize and crop an image cleanly to exact (target_w, target_h) using Pillow."""
     resampling = getattr(Image, "Resampling", Image).LANCZOS
     with Image.open(img_path) as im:
         rgb = im.convert("RGB")
@@ -93,15 +95,76 @@ def fit_image_to_frame(img_path, target_w, target_h):
         return fitted_path
 
 
+def generate_scene_image_gemini(gemini_key, prompt_text, ratio_str):
+    """Generate an image using Gemini image models via google-genai."""
+    client = genai.Client(api_key=gemini_key.strip())
+    image_models = ["gemini-3.1-flash-lite-image", "gemini-3.1-flash-image"]
+    last_err = None
+
+    for model_id in image_models:
+        try:
+            response = client.models.generate_content(
+                model=model_id,
+                contents=prompt_text,
+                config=types.GenerateContentConfig(
+                    response_modalities=["IMAGE"],
+                    image_config=types.ImageConfig(aspect_ratio=ratio_str),
+                ),
+            )
+            candidates = getattr(response, "candidates", None) or []
+            for cand in candidates:
+                content = getattr(cand, "content", None)
+                parts = getattr(content, "parts", None) or []
+                for part in parts:
+                    inline = getattr(part, "inline_data", None)
+                    if inline and getattr(inline, "data", None):
+                        return Image.open(BytesIO(inline.data)).convert("RGB")
+            raise ValueError(f"No inline image returned by {model_id}")
+        except Exception as exc:
+            last_err = exc
+    raise RuntimeError(f"Gemini image generation failed: {last_err}")
+
+
+def generate_scene_image_hf(hf_token, prompt_text, target_w, target_h):
+    """Generate an image via Hugging Face InferenceClient."""
+    client = InferenceClient(token=hf_token.strip())
+    hf_models = [
+        "black-forest-labs/FLUX.1-schnell",
+        "stabilityai/sdxl-turbo",
+    ]
+    last_err = None
+
+    for model_id in hf_models:
+        try:
+            pil_img = client.text_to_image(
+                prompt=prompt_text,
+                model=model_id,
+                width=target_w,
+                height=target_h,
+            )
+            return pil_img.convert("RGB")
+        except Exception as exc:
+            last_err = exc
+    raise RuntimeError(f"Hugging Face image generation failed: {last_err}")
+
+
 st.title("🎬 AI Animated Story Studio")
 st.caption("Turn rough story ideas into downloadable animated videos.")
 
 with st.sidebar:
     st.header("🔑 Studio Settings")
     api_key = st.text_input("Gemini API Key", type="password")
-    fal_key = st.text_input("fal.ai API Key (for moving clips)", type="password")
+    hf_token = st.text_input("Hugging Face Token (free image option)", type="password")
+    image_provider = st.selectbox(
+        "Free Scene Image Engine",
+        [
+            "Gemini Image (uses Gemini API Key)",
+            "Hugging Face Inference (uses HF Token)",
+        ],
+    )
+    fal_key = st.text_input("fal.ai API Key (optional paid I2V)", type="password")
     i2v_model = st.selectbox(
-        "Image-to-Video Model",
+        "Image-to-Video Model (Paid fal.ai)",
         [
             "fal-ai/wan-3.0-prime/image-to-video",
             "fal-ai/minimax/h3/image-to-video",
@@ -110,7 +173,10 @@ with st.sidebar:
         ],
     )
     aspect_ratio = st.selectbox("Video Format", ["9:16 (Reels / Shorts)", "16:9 (YouTube)"])
-    width, height = (720, 1280) if "9:16" in aspect_ratio else (1280, 720)
+    if "9:16" in aspect_ratio:
+        width, height, ratio_str = 720, 1280, "9:16"
+    else:
+        width, height, ratio_str = 1280, 720, "16:9"
 
 tab1, tab2, tab3, tab4 = st.tabs([
     "1️⃣ Rough Story",
@@ -124,12 +190,10 @@ with tab1:
     st.subheader("Write Your Rough Idea")
     rough_story = st.text_area(
         "Type your rough story in any style (even broken sentences):",
-        placeholder="e.g., a small boy finds an injured glowing bird in forest. he takes care of it. later bird becomes giant phoenix and saves his village from flood.",
+        placeholder="e.g., 4 hostel boys walk near a forest village, a giant bear appears, two climb a tree, one lies still holding breath, and learns who a true friend is.",
         height=140,
     )
     num_scenes = st.slider("Number of Scenes", 3, 6, 4)
-
-    import time
 
     if st.button("✨ Polish Story & Create Scenes", type="primary"):
         if not api_key or not rough_story.strip():
@@ -153,7 +217,7 @@ with tab1:
             last_exc = None
             parsed_scenes = None
 
-            with st.spinner("Polishing grammar and structuring scenes (with automatic fallback if busy)..."):
+            with st.spinner("Polishing grammar and structuring scenes..."):
                 for model_name in fallback_models:
                     for attempt in range(2):
                         try:
@@ -223,12 +287,16 @@ with tab2:
     )
     char_desc = st.text_input(
         "Describe your main character(s) (keeps them looking the same in every scene):",
-        placeholder="e.g., A 10-year-old Indian boy wearing a yellow kurta, big curious eyes, messy black hair",
+        placeholder="e.g., Four teenage boys aged 12-15 in hostel uniforms and a large brown forest bear",
     )
 
     if st.button("🎨 Generate Scene Artwork", type="primary"):
         if not st.session_state.scenes:
             st.warning("Please generate your script in Tab 1 first.")
+        elif image_provider.startswith("Gemini") and not api_key.strip():
+            st.error("Enter your Gemini API Key in the sidebar (or switch to Hugging Face Inference).")
+        elif image_provider.startswith("Hugging Face") and not hf_token.strip():
+            st.error("Enter your Hugging Face Token in the sidebar (or switch to Gemini Image).")
         else:
             st.session_state.images = []
             st.session_state.scene_clips = []
@@ -236,23 +304,22 @@ with tab2:
 
             try:
                 for idx, scene in enumerate(st.session_state.scenes):
-                    full_prompt = f"{art_style}. Character: {char_desc}. Scene: {scene['visual']}"
-                    encoded = urllib.parse.quote(full_prompt)
-                    img_url = (
-                        f"https://image.pollinations.ai/prompt/{encoded}"
-                        f"?width={width}&height={height}&seed=42&nologo=true"
-                    )
-                    resp = requests.get(img_url, timeout=60)
-                    resp.raise_for_status()
+                    full_prompt = (
+                        f"{art_style}. Consistent characters: {char_desc}. "
+                        f"Scene action: {scene['visual']}"
+                    ).strip()
+
+                    if image_provider.startswith("Gemini"):
+                        pil_img = generate_scene_image_gemini(api_key, full_prompt, ratio_str)
+                    else:
+                        pil_img = generate_scene_image_hf(hf_token, full_prompt, width, height)
 
                     img_path = f"scene_{idx}.png"
-                    with Image.open(BytesIO(resp.content)) as pil_img:
-                        pil_img.convert("RGB").save(img_path)
-
+                    pil_img.save(img_path, format="PNG")
                     st.session_state.images.append(img_path)
                     progress.progress((idx + 1) / len(st.session_state.scenes))
 
-                st.success("All scene visuals generated!")
+                st.success(f"Generated all {len(st.session_state.images)} scene images!")
             except Exception as exc:
                 st.error(f"Error generating scene images: {exc}")
 
@@ -263,7 +330,7 @@ with tab2:
                 cols[idx % 2].image(img_path, caption=f"Scene {idx + 1}", use_container_width=True)
 
         st.divider()
-        st.subheader("Animate Scene Images into Moving Clips")
+        st.subheader("Optional: Paid Image-to-Video Clips (fal.ai)")
         motion_hint = st.text_input(
             "Character & Camera Motion Hint",
             value="Expressive character movement, natural blinking and gesture, smooth cinematic camera motion",
@@ -271,7 +338,7 @@ with tab2:
 
         if st.button("🎞️ Animate Scene Images into Clips"):
             if not fal_key.strip():
-                st.warning("Enter your fal.ai API Key in the sidebar to run image-to-video generation.")
+                st.warning("fal.ai requires credits and an API key. Leave this empty to render free videos in Tab 4.")
             else:
                 os.environ["FAL_KEY"] = fal_key.strip()
                 st.session_state.scene_clips = []
@@ -301,7 +368,7 @@ with tab2:
 
                     st.success("Moving character clips are ready!")
                 except Exception as exc:
-                    st.error(f"Image-to-video failed (check fal.ai credits and API key): {exc}")
+                    st.error(f"Image-to-video failed: {exc}")
 
     if st.session_state.scene_clips:
         for idx, clip_path in enumerate(st.session_state.scene_clips):
