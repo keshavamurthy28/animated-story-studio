@@ -91,6 +91,23 @@ DEFAULT_SCENES = [
     },
 ]
 
+# FX Soundboards (Nature & Funny Reels Sounds)
+PRESET_AUDIO_EFFECTS = {
+    "🌿 Rain & Thunder": "https://assets.mixkit.co/active_storage/sfx/1250/1250-preview.mp3",
+    "🌊 Ocean Waves": "https://assets.mixkit.co/active_storage/sfx/1188/1188-preview.mp3",
+    "🔥 Campfire Crackle": "https://assets.mixkit.co/active_storage/sfx/2435/2435-preview.mp3",
+    "🌲 Forest Birds": "https://assets.mixkit.co/active_storage/sfx/2436/2436-preview.mp3",
+    "⚡ Thunder Strike": "https://assets.mixkit.co/active_storage/sfx/1271/1271-preview.mp3",
+    "💨 Wind Gust": "https://assets.mixkit.co/active_storage/sfx/2673/2673-preview.mp3",
+    "💥 Vine Boom (Meme)": "https://assets.mixkit.co/active_storage/sfx/2578/2578-preview.mp3",
+    "🎺 Airhorn (Reels)": "https://assets.mixkit.co/active_storage/sfx/2805/2805-preview.mp3",
+    "📻 Record Scratch": "https://assets.mixkit.co/active_storage/sfx/209/209-preview.mp3",
+    "🍌 Cartoon Slip": "https://assets.mixkit.co/active_storage/sfx/2021/2021-preview.mp3",
+    "🥁 Rimshot Badum Tss": "https://assets.mixkit.co/active_storage/sfx/2007/2007-preview.mp3",
+    "👏 Audience Cheer": "https://assets.mixkit.co/active_storage/sfx/442/442-preview.mp3",
+    "😂 Funny Laugh": "https://assets.mixkit.co/active_storage/sfx/475/475-preview.mp3",
+}
+
 for key, default in [
     ("scenes", [dict(s) for s in DEFAULT_SCENES]),
     ("images", []),
@@ -115,6 +132,8 @@ for key, default in [
     ("editor_blur", 0.0),
     ("editor_transition", "Crossfade"),
     ("editor_transition_sec", 0.5),
+    ("editor_video_fx", "None"),
+    ("scene_audio_fx", {}),
 ]:
     if key not in st.session_state:
         st.session_state[key] = default
@@ -182,8 +201,9 @@ def apply_pil_effects(
     contrast=1.0,
     saturation=1.0,
     blur_radius=0.0,
+    video_fx="None",
 ):
-    """Apply live studio color and filter adjustments to a PIL frame."""
+    """Apply live studio color, filter, and video preset FX to a PIL frame."""
     out = pil_img.convert("RGB")
     if abs(brightness - 1.0) > 1e-3:
         out = ImageEnhance.Brightness(out).enhance(brightness)
@@ -193,7 +213,49 @@ def apply_pil_effects(
         out = ImageEnhance.Color(out).enhance(saturation)
     if blur_radius and blur_radius > 0.05:
         out = out.filter(ImageFilter.GaussianBlur(radius=float(blur_radius)))
+
+    if video_fx == "Vintage Sepia":
+        sepia_matrix = (
+            0.393, 0.769, 0.189, 0,
+            0.349, 0.686, 0.168, 0,
+            0.272, 0.534, 0.131, 0,
+        )
+        out = out.convert("RGB", sepia_matrix)
+    elif video_fx == "Cinematic Vignette":
+        w, h = out.size
+        vig = Image.new("L", (w, h), 255)
+        draw = ImageDraw.Draw(vig)
+        draw.ellipse([-w * 0.2, -h * 0.2, w * 1.2, h * 1.2], fill=0)
+        vig = vig.filter(ImageFilter.GaussianBlur(radius=max(w, h) * 0.25))
+        dark = Image.new("RGB", (w, h), (0, 0, 0))
+        out = Image.composite(out, dark, vig)
+    elif video_fx == "Flash White":
+        out = ImageEnhance.Brightness(out).enhance(1.45)
+    elif video_fx == "Glitch RGB":
+        r, g, b = out.split()
+        r = ImageEnhance.Brightness(r).enhance(1.2)
+        b = ImageEnhance.Contrast(b).enhance(1.3)
+        out = Image.merge("RGB", (r, g, b))
+
     return out
+
+
+def download_fx_audio(fx_name, fx_url):
+    """Download and cache preset audio effects locally."""
+    os.makedirs("fx_audio_cache", exist_ok=True)
+    safe_name = "".join(c for c in fx_name if c.isalnum() or c in ("_", "-")).strip() or "sfx"
+    out_p = os.path.join("fx_audio_cache", f"{safe_name}.mp3")
+    if os.path.exists(out_p) and os.path.getsize(out_p) > 2000:
+        return out_p
+    try:
+        r = requests.get(fx_url, timeout=20)
+        if r.ok and len(r.content) > 1000:
+            with open(out_p, "wb") as f:
+                f.write(r.content)
+            return out_p
+    except Exception:
+        pass
+    return None
 
 
 def _is_valid_font_file(path):
@@ -431,6 +493,7 @@ def build_motion_clip(
     contrast=1.0,
     saturation=1.0,
     blur_radius=0.0,
+    video_fx="None",
 ):
     """Create animated scene frames with exact target_w x target_h dimensions and studio FX."""
     resampling = getattr(Image, "Resampling", Image).LANCZOS
@@ -458,30 +521,33 @@ def build_motion_clip(
         char_sway_x = int(round(math.sin(s_idx * 1.1 + scene_idx) * 6)) if enable_char_motion else 0
         char_bob_y = int(round(abs(math.cos(s_idx * 1.4 + scene_idx)) * 5)) if enable_char_motion else 0
 
-        if active_mode == "Zoom In":
+        if video_fx == "Zoom Punch":
+            scale = 1.0 + 0.22 * abs(math.sin(progress * math.pi))
+        elif active_mode == "Zoom In":
             scale = 1.0 + 0.12 * ease
-            win_w = max(2, int(round(target_w / scale)))
-            win_h = max(2, int(round(target_h / scale)))
-            x0 = (canvas_w - win_w) // 2 + char_sway_x
-            y0 = (canvas_h - win_h) // 2 + char_bob_y
         elif active_mode == "Zoom Out":
             scale = 1.12 - 0.12 * ease
-            win_w = max(2, int(round(target_w / scale)))
-            win_h = max(2, int(round(target_h / scale)))
-            x0 = (canvas_w - win_w) // 2 + char_sway_x
-            y0 = (canvas_h - win_h) // 2 + char_bob_y
-        elif active_mode == "Pan Right":
-            win_w = target_w
-            win_h = target_h
+        else:
+            scale = 1.05
+
+        win_w = max(2, int(round(target_w / scale)))
+        win_h = max(2, int(round(target_h / scale)))
+
+        if active_mode == "Pan Right":
             max_x = max(0, canvas_w - win_w)
             x0 = int(round(max_x * ease)) + char_sway_x
             y0 = max(0, (canvas_h - win_h) // 2) + char_bob_y
-        else:
-            win_w = target_w
-            win_h = target_h
+        elif active_mode == "Pan Left":
             max_x = max(0, canvas_w - win_w)
             x0 = int(round(max_x * (1.0 - ease))) + char_sway_x
             y0 = max(0, (canvas_h - win_h) // 2) + char_bob_y
+        else:
+            x0 = (canvas_w - win_w) // 2 + char_sway_x
+            y0 = (canvas_h - win_h) // 2 + char_bob_y
+
+        if video_fx == "Shake":
+            x0 += int(round(math.sin(s_idx * 3.5) * 8))
+            y0 += int(round(math.cos(s_idx * 4.2) * 6))
 
         x0 = min(max(0, x0), max(0, canvas_w - win_w))
         y0 = min(max(0, y0), max(0, canvas_h - win_h))
@@ -497,6 +563,7 @@ def build_motion_clip(
             contrast=contrast,
             saturation=saturation,
             blur_radius=blur_radius,
+            video_fx=video_fx,
         )
 
         if subtitle_lang != "None" and subtitle_text:
@@ -531,6 +598,7 @@ def render_single_scene_video(
     contrast=1.0,
     saturation=1.0,
     blur_radius=0.0,
+    video_fx="None",
 ):
     """Render and save a standalone MP4 video clip for a single scene."""
     clip = build_motion_clip(
@@ -547,6 +615,7 @@ def render_single_scene_video(
         contrast=contrast,
         saturation=saturation,
         blur_radius=blur_radius,
+        video_fx=video_fx,
     )
     try:
         clip.write_videofile(
@@ -937,7 +1006,7 @@ def apply_clip_transition(clips, transition_name="Crossfade", trans_sec=0.5):
 
 st.title("🎬 AI Animated Story Studio")
 st.caption(
-    "Command any character, setting, or nature scene directly; edit in a live top Studio Video Editor with uploaded videos/audios, effects, transitions, subtitles, and MP4 export."
+    "Command any character, setting, nature scene, or sound FX; live preview & edit in a studio editor with nature/funny soundboards, video FX, transitions, and MP4 export."
 )
 
 with st.sidebar:
@@ -979,12 +1048,12 @@ with st.sidebar:
         height=110,
     )
 
-# --- TOP STUDIO VIDEO EDITOR SCREEN (LIVE DRAFT PREVIEW, UPLOADED MEDIA, FX & TRANSITIONS) ---
-with st.expander("🎚️ Top Studio Video Editor — Live Draft, Uploaded Videos & Audios, Effects & Transitions", expanded=True):
+# --- TOP STUDIO VIDEO EDITOR SCREEN (LIVE DRAFT PREVIEW, SOUND FX & VIDEO FX) ---
+with st.expander("🎚️ Top Studio Video Editor — Live Draft, Nature & Reels Sound FX, Video FX & Media Upload", expanded=True):
     ed_left, ed_right = st.columns([1.45, 1.55])
 
     with ed_left:
-        st.markdown("**🎥 Live Draft Preview**")
+        st.markdown("**🎥 Live Draft & Video FX Preview**")
         available_source_imgs = [p for p in st.session_state.images if os.path.exists(p)]
         available_source_vids = [p for p in st.session_state.scene_videos if os.path.exists(p)] + [
             p for p in st.session_state.uploaded_video_clips if os.path.exists(p)
@@ -1012,10 +1081,11 @@ with st.expander("🎚️ Top Studio Video Editor — Live Draft, Uploaded Video
                 contrast=st.session_state.editor_contrast,
                 saturation=st.session_state.editor_saturation,
                 blur_radius=st.session_state.editor_blur,
+                video_fx=st.session_state.editor_video_fx,
             )
             st.image(
                 draft_pil,
-                caption=f"Live Draft ({width}x{height}) • Trans: {st.session_state.editor_transition}",
+                caption=f"Live Draft ({width}x{height}) • FX: {st.session_state.editor_video_fx} • Trans: {st.session_state.editor_transition}",
                 use_container_width=True,
             )
         elif available_source_vids:
@@ -1040,6 +1110,7 @@ with st.expander("🎚️ Top Studio Video Editor — Live Draft, Uploaded Video
                 contrast=st.session_state.editor_contrast,
                 saturation=st.session_state.editor_saturation,
                 blur_radius=st.session_state.editor_blur,
+                video_fx=st.session_state.editor_video_fx,
             )
             st.image(
                 bypass_preview,
@@ -1048,25 +1119,43 @@ with st.expander("🎚️ Top Studio Video Editor — Live Draft, Uploaded Video
             )
 
     with ed_right:
-        st.markdown("**✂️ Effects, Transitions & Free Media Upload**")
-        fx_c1, fx_c2 = st.columns(2)
-        with fx_c1:
-            st.session_state.editor_brightness = st.slider(
-                "Brightness", 0.5, 1.6, float(st.session_state.editor_brightness), 0.05
+        st.markdown("**🔊 Nature, Water, Fire & Funny Reels Sound FX Board**")
+        sfx_col1, sfx_col2 = st.columns([1.6, 1.4])
+        with sfx_col1:
+            selected_sfx_name = st.selectbox(
+                "Select Preset Sound FX",
+                list(PRESET_AUDIO_EFFECTS.keys()),
+                key="preset_sfx_selector",
             )
-            st.session_state.editor_contrast = st.slider(
-                "Contrast", 0.5, 1.8, float(st.session_state.editor_contrast), 0.05
+            st.audio(PRESET_AUDIO_EFFECTS[selected_sfx_name])
+        with sfx_col2:
+            sfx_scene_target = st.selectbox(
+                "Assign Sound FX to Scene",
+                list(range(max(len(st.session_state.scenes), 1))),
+                format_func=lambda k: f"Scene {k + 1}",
+                key="sfx_target_scene_select",
             )
-        with fx_c2:
-            st.session_state.editor_saturation = st.slider(
-                "Saturation / Color", 0.0, 2.0, float(st.session_state.editor_saturation), 0.05
-            )
-            st.session_state.editor_blur = st.slider(
-                "Soft Focus / Blur", 0.0, 6.0, float(st.session_state.editor_blur), 0.25
-            )
+            if st.button("➕ Inject Sound FX to Scene"):
+                cached_p = download_fx_audio(
+                    selected_sfx_name, PRESET_AUDIO_EFFECTS[selected_sfx_name]
+                )
+                if cached_p:
+                    st.session_state.scene_audio_fx[sfx_scene_target] = cached_p
+                    st.success(f"Attached {selected_sfx_name} to Scene {sfx_scene_target + 1}!")
+                else:
+                    st.error("Could not download audio effect sample.")
 
-        tr_c1, tr_c2 = st.columns(2)
-        with tr_c1:
+        st.divider()
+        st.markdown("**✂️ Video FX Presets, Color Tuning & Transitions**")
+        vfx_col1, vfx_col2 = st.columns(2)
+        with vfx_col1:
+            st.session_state.editor_video_fx = st.selectbox(
+                "Video Preset FX",
+                ["None", "Zoom Punch", "Shake", "Flash White", "Glitch RGB", "Vintage Sepia", "Cinematic Vignette"],
+                index=["None", "Zoom Punch", "Shake", "Flash White", "Glitch RGB", "Vintage Sepia", "Cinematic Vignette"].index(
+                    st.session_state.editor_video_fx
+                ),
+            )
             st.session_state.editor_transition = st.selectbox(
                 "Clip Transition",
                 ["None", "Crossfade", "Fade", "Slide Left", "Slide Right"],
@@ -1074,9 +1163,22 @@ with st.expander("🎚️ Top Studio Video Editor — Live Draft, Uploaded Video
                     st.session_state.editor_transition
                 ),
             )
-        with tr_c2:
+        with vfx_col2:
             st.session_state.editor_transition_sec = st.slider(
-                "Transition Duration (sec)", 0.1, 1.5, float(st.session_state.editor_transition_sec), 0.1
+                "Transition Sec", 0.1, 1.5, float(st.session_state.editor_transition_sec), 0.1
+            )
+            st.session_state.editor_brightness = st.slider(
+                "Brightness", 0.5, 1.6, float(st.session_state.editor_brightness), 0.05
+            )
+
+        fx_c1, fx_c2 = st.columns(2)
+        with fx_c1:
+            st.session_state.editor_contrast = st.slider(
+                "Contrast", 0.5, 1.8, float(st.session_state.editor_contrast), 0.05
+            )
+        with fx_c2:
+            st.session_state.editor_saturation = st.slider(
+                "Color Saturation", 0.0, 2.0, float(st.session_state.editor_saturation), 0.05
             )
 
         st.divider()
@@ -1494,6 +1596,7 @@ with tab2:
                     contrast=st.session_state.editor_contrast,
                     saturation=st.session_state.editor_saturation,
                     blur_radius=st.session_state.editor_blur,
+                    video_fx=st.session_state.editor_video_fx,
                 )
                 st.session_state.scene_videos.append(vid_path)
 
@@ -1785,7 +1888,7 @@ with tab3:
 
 # --- TAB 4: RENDER & DOWNLOAD ---
 with tab4:
-    st.subheader("Final Timeline Assembly, Transitions, Subtitles & Exact-Size MP4 Export")
+    st.subheader("Final Timeline Assembly, Transitions, Sound FX, Subtitles & Exact-Size MP4 Export")
     c1, c2, c3 = st.columns(3)
     with c1:
         free_motion_style = st.selectbox(
@@ -1805,7 +1908,7 @@ with tab4:
     st.caption(
         f"Target size: `{width}x{height}` ({ratio_str}) | Video clips: `{len(st.session_state.scene_videos)}` | "
         f"Images: `{len(st.session_state.images)}` | Audio tracks: `{len(st.session_state.audio_files)}` | "
-        f"Transition: `{st.session_state.editor_transition}` | Font: `{active_font_source}`"
+        f"Transition: `{st.session_state.editor_transition}` | Video FX: `{st.session_state.editor_video_fx}` | Font: `{active_font_source}`"
     )
 
     if st.button("🎬 Render Final MP4 Video", type="primary"):
@@ -1844,10 +1947,22 @@ with tab4:
 
                     for i in range(total_visual_slots):
                         aud_p = st.session_state.audio_files[i] if i < len(st.session_state.audio_files) else None
+                        sfx_p = st.session_state.scene_audio_fx.get(i)
+                        
                         aud_clip = None
                         if aud_p and os.path.exists(aud_p):
                             aud_clip = AudioFileClip(aud_p)
                             audio_clips.append(aud_clip)
+
+                        if sfx_p and os.path.exists(sfx_p):
+                            sfx_clip = AudioFileClip(sfx_p)
+                            audio_clips.append(sfx_clip)
+                            if aud_clip is not None:
+                                aud_clip = CompositeAudioClip([aud_clip, sfx_clip])
+                            else:
+                                aud_clip = sfx_clip
+
+                        if aud_clip is not None:
                             target_duration = max(float(aud_clip.duration or 1.0) + 0.3, 1.0)
                         else:
                             target_duration = 4.0
@@ -1874,6 +1989,7 @@ with tab4:
                                 contrast=st.session_state.editor_contrast,
                                 saturation=st.session_state.editor_saturation,
                                 blur_radius=st.session_state.editor_blur,
+                                video_fx=st.session_state.editor_video_fx,
                             )
 
                         if aud_clip is not None:
