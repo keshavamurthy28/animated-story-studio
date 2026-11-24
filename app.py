@@ -63,7 +63,7 @@ def apply_audio(clip, audio):
 
 
 def build_motion_clip(img_path, target_w, target_h, duration, motion_mode="Auto Alternate", scene_idx=0):
-    """Create a smooth zoom/pan video clip from a scene image using Pillow + NumPy."""
+    """Create a smooth zoom/pan video segment by sampling frames to JPEGs for reliable MoviePy concatenation."""
     resampling = getattr(Image, "Resampling", Image).LANCZOS
     modes = ["Zoom In", "Pan Right", "Zoom Out", "Pan Left"]
     active_mode = modes[scene_idx % len(modes)] if motion_mode == "Auto Alternate" else motion_mode
@@ -85,10 +85,14 @@ def build_motion_clip(img_path, target_w, target_h, duration, motion_mode="Auto 
             dtype=np.uint8,
         )
 
-    safe_dur = max(float(duration), 0.1)
+    safe_dur = max(float(duration), 0.5)
+    num_steps = max(4, min(16, int(round(safe_dur * 3))))
+    step_dur = safe_dur / num_steps
+    subclips = []
 
-    def make_frame(t):
-        progress = min(max(float(t) / safe_dur, 0.0), 1.0)
+    os.makedirs("motion_frames", exist_ok=True)
+    for s_idx in range(num_steps):
+        progress = s_idx / max(1, num_steps - 1)
         ease = progress * progress * (3.0 - 2.0 * progress)
 
         if active_mode == "Zoom In":
@@ -120,13 +124,15 @@ def build_motion_clip(img_path, target_w, target_h, duration, motion_mode="Auto 
         y0 = min(max(0, y0), max(0, canvas_h - win_h))
         cropped = canvas_np[y0 : y0 + win_h, x0 : x0 + win_w]
 
+        frame_pil = Image.fromarray(cropped)
         if win_w != target_w or win_h != target_h:
-            frame_pil = Image.fromarray(cropped).resize((target_w, target_h), resampling)
-            return np.asarray(frame_pil, dtype=np.uint8)
-        return cropped
+            frame_pil = frame_pil.resize((target_w, target_h), resampling)
 
-    clip = ImageClip(make_frame)
-    return apply_duration(clip, duration)
+        frame_path = os.path.join("motion_frames", f"s{scene_idx}_f{s_idx}.jpg")
+        frame_pil.save(frame_path, format="JPEG", quality=90)
+        subclips.append(apply_duration(ImageClip(frame_path), step_dur))
+
+    return concatenate_videoclips(subclips, method="chain")
 
 
 def modify_reference_into_scene(ref_pil, target_w, target_h, scene_idx, art_style):
