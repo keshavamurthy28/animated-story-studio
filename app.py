@@ -254,6 +254,9 @@ for key, default in [
     ("uploaded_audio_clips", []),
     ("arrangement_command", "Clean hero framing with natural sharpness and optional reel wordings"),
     ("reel_wordings_input", ""),
+    ("video_links_input", ""),
+    ("bgm_link_input", ""),
+    ("voice_links_input", ""),
     ("audio_files", []),
     ("bgm_audio_path", ""),
     ("bgm_volume", 0.22),
@@ -353,6 +356,9 @@ def _capture_snapshot(action_label="Edit"):
         "uploaded_video_clips": list(st.session_state.uploaded_video_clips),
         "arrangement_command": str(st.session_state.arrangement_command),
         "reel_wordings_input": str(st.session_state.reel_wordings_input),
+        "video_links_input": str(st.session_state.video_links_input),
+        "bgm_link_input": str(st.session_state.bgm_link_input),
+        "voice_links_input": str(st.session_state.voice_links_input),
         "audio_files": list(st.session_state.audio_files),
         "bgm_audio_path": str(st.session_state.bgm_audio_path),
         "bgm_volume": float(st.session_state.bgm_volume),
@@ -404,6 +410,8 @@ def record_undo_step(action_label="Edit"):
         and u_stack[-1].get("editor_video_fx") == snap["editor_video_fx"]
         and u_stack[-1].get("editor_transition") == snap["editor_transition"]
         and u_stack[-1].get("scene_videos") == snap["scene_videos"]
+        and u_stack[-1].get("audio_files") == snap["audio_files"]
+        and u_stack[-1].get("bgm_audio_path") == snap["bgm_audio_path"]
         and u_stack[-1].get("custom_title_text") == snap["custom_title_text"]
         and u_stack[-1].get("arrangement_command") == snap["arrangement_command"]
     ):
@@ -450,6 +458,69 @@ def perform_redo():
     st.session_state.last_history_label = f"Redid: {target_snap.get('label', 'Change')}"
     _apply_snapshot(target_snap)
     return True
+
+
+def _is_valid_media_url(raw_url):
+    """Allow only explicit http/https URLs."""
+    cleaned = (raw_url or "").strip()
+    if not cleaned:
+        return ""
+    parsed = urllib.parse.urlparse(cleaned)
+    if parsed.scheme.lower() in ("http", "https") and parsed.netloc:
+        return cleaned
+    raise ValueError(f"Unsupported or invalid URL: {cleaned}")
+
+
+def _guess_media_ext(url, content_type, media_kind="video"):
+    parsed = urllib.parse.urlparse(url)
+    path_ext = os.path.splitext(parsed.path or "")[1].lower()
+    if media_kind == "video" and path_ext in (".mp4", ".mov", ".webm", ".mkv", ".avi"):
+        return path_ext
+    if media_kind == "audio" and path_ext in (".mp3", ".wav", ".m4a", ".ogg", ".aac", ".flac"):
+        return path_ext
+
+    ct = (content_type or "").lower()
+    if media_kind == "video":
+        if "webm" in ct:
+            return ".webm"
+        if "quicktime" in ct or "mov" in ct:
+            return ".mov"
+        return ".mp4"
+    else:
+        if "wav" in ct:
+            return ".wav"
+        if "ogg" in ct:
+            return ".ogg"
+        if "mp4" in ct or "m4a" in ct or "aac" in ct:
+            return ".m4a"
+        return ".mp3"
+
+
+def download_media_from_url(raw_url, media_kind="video", prefix="link_media", timeout=90):
+    """Download a remote video, voiceover, or BGM file into uploaded_studio_media/."""
+    valid_url = _is_valid_media_url(raw_url)
+    os.makedirs("uploaded_studio_media", exist_ok=True)
+    headers = {"User-Agent": "Mozilla/5.0 (compatible; AICinemaStudio/2.6)"}
+    resp = requests.get(valid_url, headers=headers, stream=True, timeout=timeout)
+    if not resp.ok:
+        raise RuntimeError(f"HTTP {resp.status_code} when fetching {valid_url}")
+
+    ext = _guess_media_ext(valid_url, resp.headers.get("Content-Type", ""), media_kind=media_kind)
+    out_path = os.path.join("uploaded_studio_media", f"{prefix}_{int(time.time() * 1000)}{ext}")
+
+    total_bytes = 0
+    max_bytes = 350 * 1024 * 1024 if media_kind == "video" else 100 * 1024 * 1024
+    with open(out_path, "wb") as f:
+        for chunk in resp.iter_content(chunk_size=131072):
+            if chunk:
+                total_bytes += len(chunk)
+                if total_bytes > max_bytes:
+                    raise RuntimeError("Downloaded file exceeded size limit.")
+                f.write(chunk)
+
+    if total_bytes < 512 or not os.path.exists(out_path):
+        raise RuntimeError("Downloaded file appears empty or incomplete.")
+    return out_path
 
 
 def _ascii_safe(text):
@@ -1935,7 +2006,7 @@ def apply_clip_transition(clips, transition_name="Crossfade", trans_sec=0.5):
 def export_project_json():
     """Serialize studio state into a portable JSON project payload."""
     payload = {
-        "version": "2.5-pro",
+        "version": "2.6-pro",
         "format_preset": st.session_state.format_preset,
         "bg_fit_mode": st.session_state.bg_fit_mode,
         "playback_speed": st.session_state.playback_speed,
@@ -1952,6 +2023,9 @@ def export_project_json():
         "editor_video_fx": st.session_state.editor_video_fx,
         "arrangement_command": st.session_state.arrangement_command,
         "reel_wordings_input": st.session_state.reel_wordings_input,
+        "video_links_input": st.session_state.video_links_input,
+        "bgm_link_input": st.session_state.bgm_link_input,
+        "voice_links_input": st.session_state.voice_links_input,
         "bgm_volume": st.session_state.bgm_volume,
         "bgm_duck_enabled": st.session_state.bgm_duck_enabled,
         "bgm_duck_volume": st.session_state.bgm_duck_volume,
@@ -2010,6 +2084,12 @@ def import_project_json(raw_json_str):
         st.session_state.arrangement_command = str(data["arrangement_command"])
     if "reel_wordings_input" in data:
         st.session_state.reel_wordings_input = str(data["reel_wordings_input"])
+    if "video_links_input" in data:
+        st.session_state.video_links_input = str(data["video_links_input"])
+    if "bgm_link_input" in data:
+        st.session_state.bgm_link_input = str(data["bgm_link_input"])
+    if "voice_links_input" in data:
+        st.session_state.voice_links_input = str(data["voice_links_input"])
     if "locked_character_prompt" in data:
         st.session_state.locked_character_prompt = str(data["locked_character_prompt"])
     if "exact_character_count" in data:
@@ -2039,7 +2119,7 @@ st.markdown(
             <span class="studio-pill">AI STUDIO PRO</span>
             <span style="font-weight:700;font-size:17px;">Movie, Shorts & Reels Creation Suite</span>
         </div>
-        <div class="studio-sub">3-Step Undo / Redo • Unlimited Photos & Videos • Fast In-Memory Render</div>
+        <div class="studio-sub">3-Step Undo / Redo • Media Links & Uploads • Fast In-Memory Render</div>
     </div>
     """,
     unsafe_allow_html=True,
@@ -2230,7 +2310,7 @@ with st.expander("🖥️ Compact Preview Stage, Studio Controls & Clip Trim/Spl
             "✂️ Trim & Split",
             "🔊 Sound FX",
             "✍️ Text & Fit",
-            "📁 Media",
+            "📁 Media & Links",
         ])
 
         with ctrl_tabs[0]:
@@ -2307,7 +2387,7 @@ with st.expander("🖥️ Compact Preview Stage, Studio Controls & Clip Trim/Spl
         with ctrl_tabs[1]:
             editable_vids = [p for p in st.session_state.scene_videos if os.path.exists(p)]
             if not editable_vids:
-                st.info("Generate scene/reel videos in Tab 2 or upload video clips in 'Media' to trim or split.")
+                st.info("Generate scene/reel videos in Tab 2 or upload/link video clips to trim or split.")
             else:
                 clip_labels = [f"Clip {i + 1}: {os.path.basename(p)}" for i, p in enumerate(editable_vids)]
                 target_v_idx = st.selectbox(
@@ -2535,6 +2615,64 @@ with st.expander("🖥️ Compact Preview Stage, Studio Controls & Clip Trim/Spl
                     st.session_state.bgm_audio_path = bp
                     st.success("Background music (BGM) track loaded.")
                     st.rerun()
+
+            st.divider()
+            st.markdown("**🔗 Or Load Video, Voiceover & BGM Directly From Links (URLs)**")
+            lnk_v_col, lnk_bgm_col = st.columns(2)
+            with lnk_v_col:
+                v_links_val = st.text_area(
+                    "Video Clip URLs (one URL per line)",
+                    value=st.session_state.video_links_input,
+                    height=75,
+                    placeholder="https://example.com/clip1.mp4\nhttps://example.com/clip2.mp4",
+                    key="media_tab_video_links",
+                )
+                st.session_state.video_links_input = v_links_val
+                if st.button("🌐 Fetch Video Links", key="btn_fetch_vid_links_media", use_container_width=True):
+                    urls = [ln.strip() for ln in v_links_val.splitlines() if ln.strip()]
+                    if not urls:
+                        st.warning("Paste at least one direct video URL first.")
+                    else:
+                        record_undo_step("Fetch Video Links")
+                        fetched = []
+                        errs = []
+                        with st.spinner(f"Fetching {len(urls)} video link(s)..."):
+                            for idx_l, u in enumerate(urls):
+                                try:
+                                    p_vid = download_media_from_url(u, media_kind="video", prefix=f"link_vid_{idx_l}")
+                                    fetched.append(p_vid)
+                                except Exception as exc:
+                                    errs.append(f"Link {idx_l + 1}: {exc}")
+                        if fetched:
+                            st.session_state.uploaded_video_clips.extend(fetched)
+                            st.session_state.scene_videos.extend(fetched)
+                            st.success(f"Loaded {len(fetched)} video clip(s) from link(s).")
+                        for e in errs:
+                            st.error(e)
+                        if fetched:
+                            st.rerun()
+
+            with lnk_bgm_col:
+                bgm_url_val = st.text_input(
+                    "Background Music / BGM Link (MP3 / WAV / M4A / OGG)",
+                    value=st.session_state.bgm_link_input,
+                    placeholder="https://example.com/background-music.mp3",
+                    key="media_tab_bgm_link",
+                )
+                st.session_state.bgm_link_input = bgm_url_val
+                if st.button("🎵 Load BGM From Link", key="btn_fetch_bgm_link_media", use_container_width=True):
+                    if not bgm_url_val.strip():
+                        st.warning("Paste a BGM audio link first.")
+                    else:
+                        record_undo_step("Load BGM From Link")
+                        try:
+                            with st.spinner("Downloading BGM track..."):
+                                bp = download_media_from_url(bgm_url_val, media_kind="audio", prefix="link_bgm")
+                            st.session_state.bgm_audio_path = bp
+                            st.success(f"Loaded BGM from link: `{os.path.basename(bp)}`")
+                            st.rerun()
+                        except Exception as exc:
+                            st.error(f"Could not fetch BGM link: {exc}")
 
     clip_pool = st.session_state.scene_videos if st.session_state.scene_videos else st.session_state.images
     if clip_pool:
@@ -2810,9 +2948,9 @@ with tab1:
 
 # --- TAB 2: SCENE VIDEOS & MY MEDIA REELS ---
 with tab2:
-    st.markdown("### Generate Scene Videos & Custom Reels From Your Photos / Videos")
+    st.markdown("### Generate Scene Videos & Custom Reels From Your Photos / Videos / Links")
 
-    st.markdown("#### 1. Add Unlimited Photos & Videos (For Your Own Reels or Reference)")
+    st.markdown("#### 1. Add Unlimited Photos, Videos, or Direct Video Links")
     m_up1, m_up2 = st.columns(2)
     with m_up1:
         multi_photo_uploads = st.file_uploader(
@@ -2858,6 +2996,38 @@ with tab2:
             st.session_state.scene_videos.extend(saved_vids)
             st.success(f"Added {len(saved_vids)} video clip(s) to your clip list.")
             st.rerun()
+
+    t2_v_links = st.text_area(
+        "Direct Video Clip Links (One video URL per line — MP4 / MOV / WEBM / MKV):",
+        value=st.session_state.video_links_input,
+        height=75,
+        placeholder="https://example.com/scene1.mp4\nhttps://example.com/scene2.mp4",
+        key="tab2_video_links_area",
+    )
+    st.session_state.video_links_input = t2_v_links
+    if st.button("🌐 Download & Add Video Links to Clips", key="btn_add_vid_links_t2"):
+        urls = [ln.strip() for ln in t2_v_links.splitlines() if ln.strip()]
+        if not urls:
+            st.warning("Enter at least one video URL first.")
+        else:
+            record_undo_step("Add Video Links")
+            added = []
+            errs = []
+            with st.spinner(f"Fetching {len(urls)} video link(s)..."):
+                for idx_l, u in enumerate(urls):
+                    try:
+                        vp = download_media_from_url(u, media_kind="video", prefix=f"t2_vid_{idx_l}")
+                        added.append(vp)
+                    except Exception as exc:
+                        errs.append(f"URL {idx_l + 1}: {exc}")
+            if added:
+                st.session_state.uploaded_video_clips.extend(added)
+                st.session_state.scene_videos.extend(added)
+                st.success(f"Added {len(added)} linked video clip(s).")
+            for e in errs:
+                st.error(e)
+            if added:
+                st.rerun()
 
     existing_photos = [p for p in st.session_state.uploaded_photo_paths if os.path.exists(p)]
     if existing_photos:
@@ -3110,6 +3280,61 @@ with tab3:
             st.error(f"Voiceover generation error: {exc}")
 
     st.divider()
+    st.markdown("#### 🔗 Load Voiceover or Background Music (BGM) From Links")
+    au_lnk1, au_lnk2 = st.columns(2)
+    with au_lnk1:
+        t3_voice_links = st.text_area(
+            "Voiceover Audio Links (One URL per line — Scene 1, Scene 2, ...):",
+            value=st.session_state.voice_links_input,
+            height=75,
+            placeholder="https://example.com/vo-scene1.mp3\nhttps://example.com/vo-scene2.mp3",
+            key="tab3_voice_links_area",
+        )
+        st.session_state.voice_links_input = t3_voice_links
+        if st.button("🎙️ Fetch Voiceover Links", key="btn_fetch_voice_links_t3", use_container_width=True):
+            v_urls = [ln.strip() for ln in t3_voice_links.splitlines() if ln.strip()]
+            if not v_urls:
+                st.warning("Paste at least one voiceover URL first.")
+            else:
+                record_undo_step("Fetch Voiceover Links")
+                loaded_vos = []
+                errs = []
+                with st.spinner(f"Fetching {len(v_urls)} voiceover track(s)..."):
+                    for idx_v, vu in enumerate(v_urls):
+                        try:
+                            vp = download_media_from_url(vu, media_kind="audio", prefix=f"t3_vo_{idx_v}")
+                            loaded_vos.append(vp)
+                        except Exception as exc:
+                            errs.append(f"VO {idx_v + 1}: {exc}")
+                if loaded_vos:
+                    st.session_state.audio_files = loaded_vos
+                    st.success(f"Assigned {len(loaded_vos)} voiceover track(s) by scene order.")
+                for e in errs:
+                    st.error(e)
+
+    with au_lnk2:
+        t3_bgm_link = st.text_input(
+            "Background Music / BGM Link (MP3 / WAV / M4A / OGG):",
+            value=st.session_state.bgm_link_input,
+            placeholder="https://example.com/bgm-score.mp3",
+            key="tab3_bgm_link_input",
+        )
+        st.session_state.bgm_link_input = t3_bgm_link
+        if st.button("🎶 Fetch BGM Link", key="btn_fetch_bgm_link_t3", use_container_width=True):
+            if not t3_bgm_link.strip():
+                st.warning("Paste a BGM URL first.")
+            else:
+                record_undo_step("Fetch BGM Link")
+                try:
+                    with st.spinner("Downloading BGM link..."):
+                        bp = download_media_from_url(t3_bgm_link, media_kind="audio", prefix="t3_bgm")
+                    st.session_state.bgm_audio_path = bp
+                    st.success(f"Set BGM track to `{os.path.basename(bp)}`.")
+                    st.rerun()
+                except Exception as exc:
+                    st.error(f"Could not fetch BGM link: {exc}")
+
+    st.divider()
     st.markdown("#### Mix Levels & Auto-Ducking (Voice, Background Music & Sound FX)")
     m1, m2, m3 = st.columns(3)
     with m1:
@@ -3170,7 +3395,7 @@ with tab4:
     if st.button("🎬 Render Final MP4 Video", type="primary", key="btn_render_final_mp4"):
         has_media = bool(st.session_state.scene_videos or st.session_state.images)
         if not has_media:
-            st.error("Generate scene/reel videos in Tab 2 or upload clips first.")
+            st.error("Generate scene/reel videos in Tab 2 or upload/link clips first.")
         else:
             clips = []
             src_vids = []
