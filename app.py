@@ -161,19 +161,77 @@ def modify_reference_into_scene(ref_pil, target_w, target_h, scene_idx, art_styl
 
 
 def make_local_scene_card(target_w, target_h, scene_idx, prompt_text):
-    """Local fallback card when no AI image quota/token is available."""
-    top_sky = np.array([48, 128, 178], dtype=np.float32)
-    bot_sky = np.array([228, 196, 128], dtype=np.float32)
+    """Illustrated forest & character fallback when external image APIs are not configured."""
+    top_sky = np.array([56, 152, 204], dtype=np.float32)
+    bot_sky = np.array([246, 218, 142], dtype=np.float32)
+    if scene_idx % 2 == 1:
+        top_sky = np.array([34, 86, 68], dtype=np.float32)
+        bot_sky = np.array([218, 142, 68], dtype=np.float32)
+
     y_idx = np.linspace(0.0, 1.0, target_h)[:, None, None]
     grad = np.broadcast_to(top_sky * (1.0 - y_idx) + bot_sky * y_idx, (target_h, target_w, 3)).astype(np.uint8)
     img = Image.fromarray(grad, mode="RGB")
-    draw = ImageDraw.Draw(img)
-    ground_y = int(target_h * 0.76)
-    draw.rectangle([0, ground_y, target_w, target_h], fill=(64, 134, 58))
-    draw.rectangle([24, target_h - 120, target_w - 24, target_h - 24], fill=(20, 26, 36))
-    draw.text((40, target_h - 98), f"Scene {scene_idx + 1} (Fallback Preview)", fill=(255, 214, 102))
-    draw.text((40, target_h - 68), (prompt_text or "")[:78], fill=(240, 244, 248))
-    return img
+    draw = ImageDraw.Draw(img, "RGBA")
+
+    ground_y = int(target_h * 0.72)
+
+    # Sun / glow
+    sun_x, sun_y = int(target_w * 0.52), int(target_h * 0.34)
+    for rad in range(170, 20, -25):
+        draw.ellipse([sun_x - rad, sun_y - rad, sun_x + rad, sun_y + rad], fill=(255, 244, 180, 55))
+
+    # Layered forest trees
+    step = max(80, target_w // 6)
+    for idx_t, tx in enumerate(range(35, target_w + 50, step)):
+        draw.rectangle([tx - 10, ground_y - 150, tx + 10, ground_y + 10], fill=(82, 48, 26, 255))
+        fol_col = (48, 138, 62, 255) if idx_t % 2 == 0 else (36, 112, 52, 255)
+        for ox, oy, r in [(-24, -155, 36), (24, -155, 36), (0, -182, 44), (0, -140, 38)]:
+            draw.ellipse([tx + ox - r, ground_y + oy - r, tx + ox + r, ground_y + oy + r], fill=fol_col)
+
+    # Forest floor & soil
+    draw.ellipse([-60, ground_y - 25, target_w + 60, ground_y + 55], fill=(86, 168, 62, 255))
+    draw.rectangle([0, ground_y + 15, target_w, target_h], fill=(70, 146, 50, 255))
+    soil_y = min(target_h - 30, ground_y + int(target_h * 0.14))
+    draw.rectangle([0, soil_y, target_w, target_h], fill=(134, 86, 48, 255))
+
+    # 4 boys + giant bear characters
+    boys = [
+        (0.18, 18, 106, (62, 164, 74)),
+        (0.30, 20, 112, (48, 156, 194)),
+        (0.42, 22, 116, (238, 154, 46)),
+        (0.54, 34, 110, (222, 84, 110)),
+    ]
+    for b_idx, (xf, hw, hh, col) in enumerate(boys):
+        bx = int(target_w * xf)
+        by = ground_y + 6
+        if scene_idx == 2 and b_idx in (0, 1):
+            by = ground_y - 120 - b_idx * 20
+        elif scene_idx == 2 and b_idx == 3:
+            draw.rounded_rectangle([bx - 38, ground_y - 12, bx + 38, ground_y + 8], radius=9, fill=col, outline=(25, 20, 15, 255), width=2)
+            draw.ellipse([bx + 30, ground_y - 22, bx + 56, ground_y + 4], fill=(250, 202, 156, 255), outline=(25, 20, 15, 255), width=2)
+            continue
+
+        leg_h = max(24, hh // 3)
+        draw.rectangle([bx - hw + 4, by - leg_h, bx - 3, by], fill=(52, 70, 98, 255))
+        draw.rectangle([bx + 3, by - leg_h, bx + hw - 4, by], fill=(52, 70, 98, 255))
+        draw.rounded_rectangle([bx - hw, by - hh + 26, bx + hw, by - leg_h + 4], radius=12, fill=col, outline=(25, 20, 15, 255), width=2)
+        hr = 20
+        hcy = by - hh + 8
+        draw.ellipse([bx - hr, hcy - hr, bx + hr, hcy + hr], fill=(250, 202, 156, 255), outline=(25, 20, 15, 255), width=2)
+        draw.pieslice([bx - hr, hcy - hr - 3, bx + hr, hcy + 3], start=180, end=360, fill=(82, 48, 26, 255))
+        draw.ellipse([bx - 7, hcy - 3, bx - 2, hcy + 2], fill=(20, 20, 24, 255))
+        draw.ellipse([bx + 2, hcy - 3, bx + 7, hcy + 2], fill=(20, 20, 24, 255))
+
+    bear_x = int(target_w * 0.78)
+    bear_y = ground_y + 6
+    draw.ellipse([bear_x - 64, bear_y - 114, bear_x + 64, bear_y - 14], fill=(120, 66, 32, 255), outline=(38, 20, 10, 255), width=3)
+    draw.ellipse([bear_x - 62, bear_y - 134, bear_x + 6, bear_y - 68], fill=(132, 74, 36, 255), outline=(38, 20, 10, 255), width=3)
+    draw.ellipse([bear_x - 66, bear_y - 144, bear_x - 42, bear_y - 120], fill=(106, 56, 26, 255))
+    draw.ellipse([bear_x - 18, bear_y - 144, bear_x + 6, bear_y - 120], fill=(106, 56, 26, 255))
+    draw.ellipse([bear_x - 44, bear_y - 108, bear_x - 34, bear_y - 98], fill=(255, 255, 255, 255))
+    draw.ellipse([bear_x - 41, bear_y - 105, bear_x - 36, bear_y - 100], fill=(18, 18, 22, 255))
+
+    return img.convert("RGB")
 
 
 def generate_scene_image_with_ai(
